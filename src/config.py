@@ -1093,6 +1093,7 @@ class Config:
     serpapi_keys: List[str] = field(default_factory=list)  # SerpAPI Keys
     searxng_base_urls: List[str] = field(default_factory=list)  # SearXNG instance URLs (self-hosted, no quota)
     searxng_public_instances_enabled: bool = False  # Opt in to public discovery when base URLs are absent
+    serpapi_us_only: bool = False  # 开启后 SerpAPI 仅参与美股搜索
     searxng_timeout_seconds: int = 10  # 自建 SearXNG 单次搜索超时（秒）
 
     # === Social Sentiment (US stocks only, api.adanos.org) ===
@@ -1848,6 +1849,10 @@ class Config:
             os.getenv('SEARXNG_PUBLIC_INSTANCES_ENABLED'),
             default=False,
         )
+        serpapi_us_only = parse_env_bool(
+            os.getenv('SERPAPI_US_ONLY'),
+            default=False,
+        )
 
         # 企微消息类型与最大字节数逻辑
         wechat_msg_type = os.getenv('WECHAT_MSG_TYPE', 'markdown')
@@ -2021,6 +2026,7 @@ class Config:
             tavily_api_keys=tavily_api_keys,
             brave_api_keys=brave_api_keys,
             serpapi_keys=serpapi_keys,
+            serpapi_us_only=serpapi_us_only,
             searxng_base_urls=searxng_base_urls,
             searxng_public_instances_enabled=searxng_public_instances_enabled,
             searxng_timeout_seconds=parse_env_int(

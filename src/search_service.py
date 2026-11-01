@@ -2414,6 +2414,7 @@ class SearchService:
         searxng_timeout_seconds: Optional[int] = None,
         news_max_age_days: int = 3,
         news_strategy_profile: str = "short",
+        serpapi_us_only: bool = False,
     ):
         """
         初始化搜索服务
@@ -2429,6 +2430,7 @@ class SearchService:
             searxng_public_instances_enabled: 未配置自建实例时，是否自动使用公共 SearXNG 实例
             news_max_age_days: 新闻最大时效（天）
             news_strategy_profile: 新闻窗口策略档位（ultra_short/short/medium/long）
+            serpapi_us_only: 开启后 SerpAPI 仅参与美股搜索（A 股/港股/题材等非美股目标跳过 SerpAPI）
         """
         self._constructor_kwargs: Dict[str, Any] = {
             "bocha_keys": list(bocha_keys or []),
@@ -2442,7 +2444,9 @@ class SearchService:
             "searxng_timeout_seconds": searxng_timeout_seconds,
             "news_max_age_days": int(news_max_age_days),
             "news_strategy_profile": news_strategy_profile,
+            "serpapi_us_only": bool(serpapi_us_only),
         }
+        self._serpapi_us_only = bool(serpapi_us_only)
         self._providers: List[BaseSearchProvider] = []
         self.news_max_age_days = max(1, news_max_age_days)
         raw_profile = (news_strategy_profile or "short").strip().lower()
@@ -2507,6 +2511,14 @@ class SearchService:
             
         if not self._providers:
             logger.warning("未配置任何搜索能力，新闻搜索功能将不可用")
+        elif self._serpapi_us_only and any(
+            isinstance(p, SerpAPISearchProvider) for p in self._providers
+        ):
+            logger.info("已启用 SERPAPI_US_ONLY：SerpAPI 仅参与美股搜索")
+            if all(isinstance(p, SerpAPISearchProvider) for p in self._providers):
+                logger.warning(
+                    "SERPAPI_US_ONLY 已开启且 SerpAPI 是唯一搜索能力，A 股/港股/题材等非美股目标将无搜索结果"
+                )
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
@@ -2576,6 +2588,31 @@ class SearchService:
         """判断是否为美股/美股指数代码。"""
         code = (stock_code or "").strip().upper()
         return bool(cls._US_STOCK_RE.match(code) or is_us_index_code(code))
+
+    @classmethod
+    def _is_us_search_target(cls, stock_code: Optional[str], stock_name: Optional[str]) -> bool:
+        """判断搜索目标是否为美股（含美股大盘复盘）。"""
+        code = (stock_code or "").strip()
+        if code.lower() == "market":
+            name = (stock_name or "").strip().lower()
+            return name in ("美股市场", "us market")
+        return cls._is_us_stock(code)
+
+    def _providers_for_target(
+        self,
+        stock_code: Optional[str] = None,
+        stock_name: Optional[str] = None,
+    ) -> List[BaseSearchProvider]:
+        """按 SERPAPI_US_ONLY 过滤当前目标可用的 provider，保持原有优先级顺序。
+
+        未传 stock_code 视为非美股目标（如题材搜索）。
+        """
+        providers = self._providers
+        if not getattr(self, "_serpapi_us_only", False):
+            return list(providers)
+        if stock_code is not None and self._is_us_search_target(stock_code, stock_name):
+            return list(providers)
+        return [p for p in providers if not isinstance(p, SerpAPISearchProvider)]
 
     @classmethod
     def _should_prefer_chinese_news(
@@ -3892,7 +3929,7 @@ class SearchService:
 
         had_provider_success = False
         try:
-            for provider in self._providers:
+            for provider in self._providers_for_target():
                 if not provider.is_available:
                     continue
                 search_kwargs: Dict[str, Any] = {}
@@ -4133,7 +4170,7 @@ class SearchService:
             had_provider_success = False
             best_ranked_response: Optional[SearchResponse] = None
             best_ranked_stats: Optional[Dict[str, int]] = None
-            for provider in self._providers:
+            for provider in self._providers_for_target(stock_code, stock_name):
                 if not provider.is_available:
                     continue
 
@@ -4363,7 +4400,7 @@ class SearchService:
         logger.info(f"搜索股票事件: {stock_name}({stock_code}) - {event_types}")
         
         # 依次尝试各个搜索引擎
-        for provider in self._providers:
+        for provider in self._providers_for_target(stock_code, stock_name):
             if not provider.is_available:
                 continue
             
@@ -4548,7 +4585,9 @@ class SearchService:
                 break
             
             # 选择搜索引擎（轮流使用）
-            available_providers = [p for p in self._providers if p.is_available]
+            available_providers = [
+                p for p in self._providers_for_target(stock_code, stock_name) if p.is_available
+            ]
             if not available_providers:
                 break
             
@@ -4775,7 +4814,7 @@ class SearchService:
             logger.info(f"[增强搜索] 第 {i+1}/{max_attempts} 次搜索: {query}")
             
             # 依次尝试各个搜索引擎
-            for provider in self._providers:
+            for provider in self._providers_for_target(stock_code, stock_name):
                 if not provider.is_available:
                     continue
                 
@@ -4927,6 +4966,7 @@ def get_search_service() -> SearchService:
                     searxng_timeout_seconds=getattr(config, "searxng_timeout_seconds", None),
                     news_max_age_days=config.news_max_age_days,
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
+                    serpapi_us_only=getattr(config, "serpapi_us_only", False),
                 )
     
     return _search_service
