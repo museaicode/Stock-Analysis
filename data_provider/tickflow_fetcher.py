@@ -39,6 +39,7 @@ from .base import (
     normalize_stock_code,
 )
 from .realtime_types import RealtimeSource, UnifiedRealtimeQuote, safe_int
+from .us_index_mapping import is_us_stock_code
 
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,7 @@ class TickFlowFetcher(BaseFetcher):
         self._capability_supported: Dict[str, Optional[bool]] = {
             "batch_daily": None,
             "universe_quotes": None,
+            "us_realtime_quotes": None,
         }
         self._capability_checked_at: Dict[str, float] = {}
 
@@ -169,9 +171,9 @@ class TickFlowFetcher(BaseFetcher):
     def _fetch_raw_data(
         self, stock_code: str, start_date: str, end_date: str
     ) -> pd.DataFrame:
-        symbol = self._to_tickflow_symbol(stock_code)
+        symbol = self._to_tickflow_symbol(stock_code) or self._to_tickflow_us_symbol(stock_code)
         if not symbol:
-            raise DataFetchError("TickFlowFetcher only supports A-share/ETF symbols")
+            raise DataFetchError("TickFlowFetcher only supports A-share/ETF and US stock symbols")
 
         cache_key = self._daily_cache_key(symbol, start_date, end_date)
         cached = self._get_daily_cache(cache_key)
@@ -203,6 +205,7 @@ class TickFlowFetcher(BaseFetcher):
             end_date=end_date,
             count=request_count,
             context="single",
+            calendar="XNYS" if self._is_us_symbol(symbol) else "XSHG",
         )
         self._set_daily_cache(cache_key, raw_df)
         return raw_df.copy()
@@ -218,8 +221,12 @@ class TickFlowFetcher(BaseFetcher):
         for column in ("open", "high", "low", "close", "amount"):
             normalized[column] = pd.to_numeric(raw.get(column), errors="coerce")
 
-        # TickFlow daily volume is in lots for A-shares; project standard is shares.
-        normalized["volume"] = self._cn_lots_to_shares(raw.get("volume"))
+        if self._to_tickflow_symbol(stock_code) is None and self._to_tickflow_us_symbol(stock_code):
+            # US daily volume is already in shares.
+            normalized["volume"] = pd.to_numeric(raw.get("volume"), errors="coerce")
+        else:
+            # TickFlow daily volume is in lots for A-shares; project standard is shares.
+            normalized["volume"] = self._cn_lots_to_shares(raw.get("volume"))
 
         if "pct_chg" in raw.columns:
             normalized["pct_chg"] = pd.to_numeric(raw["pct_chg"], errors="coerce")
@@ -411,6 +418,20 @@ class TickFlowFetcher(BaseFetcher):
         return f"{code}.{exchange}"
 
     @staticmethod
+    def _to_tickflow_us_symbol(stock_code: str) -> Optional[str]:
+        """Return the TickFlow US symbol (e.g. ``AAPL.US``) or None for non-US stocks/indices."""
+        code = str(stock_code or "").strip().upper()
+        if code.endswith(".US"):
+            code = code[: -len(".US")]
+        if not code or not is_us_stock_code(code):
+            return None
+        return f"{code}.US"
+
+    @staticmethod
+    def _is_us_symbol(symbol: str) -> bool:
+        return str(symbol or "").strip().upper().endswith(".US")
+
+    @staticmethod
     def _date_to_ms(date_str: str, *, end_of_day: bool = False) -> int:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         if end_of_day:
@@ -454,6 +475,7 @@ class TickFlowFetcher(BaseFetcher):
         end_date: str,
         count: int,
         context: str,
+        calendar: str = "XSHG",
     ) -> pd.DataFrame:
         frame = cls._coerce_frame(value)
         if frame.empty:
@@ -477,6 +499,7 @@ class TickFlowFetcher(BaseFetcher):
             end_date=end_date,
             count=count,
             returned_rows=len(frame),
+            calendar=calendar,
         ):
             first_date = valid_dates.min().strftime("%Y-%m-%d")
             last_date = valid_dates.max().strftime("%Y-%m-%d")
@@ -513,6 +536,7 @@ class TickFlowFetcher(BaseFetcher):
         end_date: str,
         count: int,
         returned_rows: int,
+        calendar: str = "XSHG",
     ) -> bool:
         if returned_rows < count:
             return False
@@ -521,15 +545,15 @@ class TickFlowFetcher(BaseFetcher):
         except (TypeError, ValueError):
             return False
 
-        first_expected = cls._first_trading_date_on_or_after(requested_start)
+        first_expected = cls._first_trading_date_on_or_after(requested_start, calendar=calendar)
         first_returned = dates.min().to_pydatetime().replace(tzinfo=None)
         return first_returned > first_expected
 
     @staticmethod
-    def _first_trading_date_on_or_after(start_date: datetime) -> datetime:
+    def _first_trading_date_on_or_after(start_date: datetime, calendar: str = "XSHG") -> datetime:
         if xcals is not None:
             try:
-                cal = xcals.get_calendar("XSHG")
+                cal = xcals.get_calendar(calendar)
                 session = cal.date_to_session(start_date.date(), direction="next")
                 return datetime.combine(session.date(), datetime.min.time())
             except Exception:
@@ -781,20 +805,35 @@ class TickFlowFetcher(BaseFetcher):
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         symbol = self._to_tickflow_symbol(stock_code)
+        is_us = False
         if not symbol:
-            return None
+            symbol = self._to_tickflow_us_symbol(stock_code)
+            if not symbol:
+                return None
+            is_us = True
 
         quote_ttl = self._get_realtime_cache_ttl()
         quote = self._get_cached_quote(symbol, quote_ttl)
         if quote is None:
+            if is_us and not self._capability_available("us_realtime_quotes"):
+                return None
             client = self._get_client()
             if client is None:
                 return None
             try:
                 quotes = client.quotes.get(symbols=[symbol])
             except Exception as exc:
+                if is_us and self._is_permission_error(exc):
+                    self._mark_capability("us_realtime_quotes", False)
+                    logger.info(
+                        "[TickFlowFetcher] US realtime quotes not entitled, skip temporarily: %s",
+                        exc,
+                    )
+                    return None
                 logger.warning("[TickFlowFetcher] realtime quote failed for %s: %s", symbol, exc)
                 return None
+            if is_us:
+                self._mark_capability("us_realtime_quotes", True)
             self._store_quotes(quotes)
             quote = self._get_cached_quote(symbol, quote_ttl)
 
@@ -816,7 +855,12 @@ class TickFlowFetcher(BaseFetcher):
         stock_code: str,
         quote: Dict[str, Any],
     ) -> Optional[UnifiedRealtimeQuote]:
-        symbol = str(quote.get("symbol") or self._to_tickflow_symbol(stock_code) or "").upper()
+        symbol = str(
+            quote.get("symbol")
+            or self._to_tickflow_symbol(stock_code)
+            or self._to_tickflow_us_symbol(stock_code)
+            or ""
+        ).upper()
         code = normalize_stock_code(stock_code or symbol)
         current = self._safe_float(quote.get("last_price"))
         if current is None:
@@ -829,7 +873,11 @@ class TickFlowFetcher(BaseFetcher):
         open_price = self._safe_float(quote.get("open"))
         high = self._safe_float(quote.get("high"))
         low = self._safe_float(quote.get("low"))
-        volume = self._cn_lots_to_shares(quote.get("volume"), default=0)
+        if self._is_us_symbol(symbol):
+            # US quote volume is already in shares.
+            volume = safe_int(quote.get("volume"), 0)
+        else:
+            volume = self._cn_lots_to_shares(quote.get("volume"), default=0)
         amount = self._safe_float(quote.get("amount")) or 0.0
         change_amount = self._safe_float(ext.get("change_amount"))
         if change_amount is None and prev_close is not None:

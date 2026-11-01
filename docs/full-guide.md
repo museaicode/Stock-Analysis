@@ -160,7 +160,8 @@ daily_stock_analysis/
 | `STOCK_LIST` | 自选股代码，如 `600519,300750,002594,7203.T,005930.KS`；推荐使用英文逗号，中文逗号、顿号、分号、空格和换行会被识别并规范为英文逗号 | ✅ |
 | `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/) 针对中文内容特别优化；同一 Key 可用于搜索与 Anspire 大模型网关的兜底示例（是否可用以控制台与账号权限为准） | 推荐 |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/github-daily-stock-analysis) 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
-| `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股（含美股大盘复盘）搜索，A 股/港股/题材搜索跳过 SerpAPI 以节省额度；SerpAPI 为唯一搜索能力时非美股将无搜索结果（默认 `false`） | 可选 |
+| `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股（含美股大盘复盘）搜索，A 股/港股/题材搜索跳过 SerpAPI 以节省额度；SerpAPI 为唯一搜索能力时非美股将无搜索结果；等价于 `SEARCH_PROVIDER_MARKETS` 中的 `serpapi:us`（默认 `false`） | 可选 |
+| `SEARCH_PROVIDER_MARKETS` | 搜索服务按市场分配，格式 `provider:market[,market]`，多条用 `;` 分隔，如 `anspire:cn,hk,topic;serpapi:us;brave:us`。服务名：`anspire`/`bocha`/`tavily`/`brave`/`serpapi`/`minimax`/`searxng`；市场：`cn`/`hk`/`us`/`jp`/`kr`/`tw`/`topic`（题材搜索），`all` 或 `*` 表示不限制；未写入的服务参与所有市场，无效条目打 warning 后忽略；某市场分配后无可用服务时启动日志会提示（默认空，不限制） | 可选 |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 可选 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
 | `BRAVE_API_KEYS` | [Brave Search](https://brave.com/search/api/) API（隐私优先，美股优化，多个key用逗号分隔） | 可选 |
@@ -170,7 +171,7 @@ daily_stock_analysis/
 | `SEARXNG_TIMEOUT_SECONDS` | 自建 SearXNG 单次搜索超时（秒，默认 `10`，最小 `1`）；实例较慢（如聚合引擎较多的 NAS 部署）时可调大，公共实例超时不受影响。GitHub Actions 需显式映射该变量 | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空（或未设置/空白）时使用官方端点 `http://api.tushare.pro`，仅在需通过公司内网代理、跨境网络或自建镜像时填写 `http://` 或 `https://` 开头的完整地址 | 可选 |
-| `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；失败或权限不足时自动回退。 | 可选 |
+| `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；美股日 K 固定在 Finnhub 之后兜底（不受 `TICKFLOW_PRIORITY` 影响），美股实时行情用于补充字段；失败或权限不足时自动回退。 | 可选 |
 | `MX_APIKEY` / `MX_PRIORITY` | 妙想（东方财富 MX_API）补充数据源：在东财公开接口失败/限流时兜底获取筹码分布与个股资金流。**严格 opt-in 的第三方能力**：需用户自备 Key（妙想 Skills 页面），限时免费/会员配额策略可能调整、不承诺长期免费；未配置则不启用、行为不变。`MX_PRIORITY` 默认 `6`。GitHub Actions 需在 Secrets 配置 `MX_APIKEY` | 可选 |
 | `LONGBRIDGE_OAUTH_CLIENT_ID` | [Longbridge OpenAPI](https://open.longbridge.com/) OAuth client_id；留空且无 Legacy Access Token 时会兼容使用 `LONGBRIDGE_APP_KEY` | 可选 |
 | `LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` | OAuth token 缓存文件的 base64 内容，供 GitHub Actions / Docker 等 headless 环境恢复 SDK token 缓存 | 可选 |
@@ -381,7 +382,8 @@ daily_stock_analysis/
 |--------|------|:----:|
 | `ANSPIRE_API_KEYS` | Anspire Open API Key（可用于搜索与大模型网关共享场景的配置示例；是否可用取决于账号权限与网关可见性，可有效增强 A 股分析效果） | 推荐 |
 | `SERPAPI_API_KEYS` | SerpAPI 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
-| `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股搜索，非美股目标跳过 SerpAPI（默认 `false`） | 可选 |
+| `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股搜索，非美股目标跳过 SerpAPI；等价于 `serpapi:us`，`SEARCH_PROVIDER_MARKETS` 显式写了 `serpapi` 时以后者为准（默认 `false`） | 可选 |
+| `SEARCH_PROVIDER_MARKETS` | 搜索服务按市场分配，格式 `provider:market[,market]`，多条用 `;` 分隔，如 `anspire:cn,hk,topic;serpapi:us;brave:us`；市场取 `cn`/`hk`/`us`/`jp`/`kr`/`tw`/`topic`，`all`/`*` 表示不限制；未写入的服务不限制市场（默认空） | 可选 |
 | `TAVILY_API_KEYS` | Tavily 搜索 API Key | 可选 |
 | `BOCHA_API_KEYS` | 博查搜索 API Key（中文优化） | 可选 |
 | `BRAVE_API_KEYS` | Brave Search API Key（美股优化） | 可选 |
@@ -433,7 +435,7 @@ daily_stock_analysis/
 |--------|------|--------|:----:|
 | `TUSHARE_TOKEN` | Tushare Pro Token | - | 可选 |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空时使用官方端点 `http://api.tushare.pro`，仅在需通过公司内网代理、跨境网络或自建镜像时填 `http://` 或 `https://` 开头的完整地址 | `http://api.tushare.pro` | 可选 |
-| `TICKFLOW_API_KEY` | TickFlow API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；失败或权限不足时自动回退。 | - | 可选 |
+| `TICKFLOW_API_KEY` | TickFlow API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；美股日 K 路由为 Finnhub → TickFlow → AlphaVantage → YFinance → Longbridge（Longbridge 优先时排在最前），TickFlow 始终紧跟 Finnhub、不受 `TICKFLOW_PRIORITY` 影响；美股实时行情用于补充字段，无权限时短期跳过；失败或权限不足时自动回退。 | - | 可选 |
 | `TICKFLOW_PRIORITY` | TickFlow 普通 A 股日 K 数据源优先级；数字越小越早尝试，默认 `2`；未配置 API Key 时不启用；已登记指数使用独立固定链，不读取本变量；不影响实时行情。 | `2` | 可选 |
 | `TENCENT_PRIORITY` | 腾讯直连普通 A 股日 K 数据源优先级；数字越小越早尝试，默认 `5`，作为通用链路最终兜底；已登记指数使用独立固定链，不读取本变量；不影响实时行情。 | `5` | 可选 |
 | `TICKFLOW_KLINE_ADJUST` | TickFlow 日 K 复权模式：`none`、`forward`、`backward`、`forward_additive`、`backward_additive`。 | `none` | 可选 |

@@ -116,8 +116,8 @@ _PROVIDER_DEFINITIONS: Sequence[_ProviderDefinition] = (
         label="TickFlow",
         fetcher_name="TickFlowFetcher",
         dataset_markets={
-            "quote.realtime": ("cn",),
-            "kline.daily": ("cn",),
+            "quote.realtime": ("cn", "us"),
+            "kline.daily": ("cn", "us"),
             "index.daily": ("cn",),
             "market.overview": ("cn",),
         },
