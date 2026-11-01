@@ -9,6 +9,8 @@ Markets: US only
 
 import logging
 import os
+import threading
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -22,6 +24,41 @@ from .us_index_mapping import is_us_stock_code
 logger = logging.getLogger(__name__)
 
 _FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
+
+# Finnhub 免费套餐不含历史 K 线（/stock/candle 返回 403）。命中 403 后在进程内
+# 记住该结论，冷却期内不再请求 candle 接口，直接交给下一个日线数据源。
+_CANDLE_FORBIDDEN_COOLDOWN_SECONDS = 24 * 60 * 60
+
+
+class _CandleAccessState:
+    """进程级 /stock/candle 无权限状态（所有 FinnhubFetcher 实例共享）。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._blocked_until: float = 0.0
+        self._warned: bool = False
+
+    def is_blocked(self, now: Optional[float] = None) -> bool:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            return now < self._blocked_until
+
+    def mark_forbidden(self, now: Optional[float] = None) -> bool:
+        """记录 403；返回 True 表示本进程首次记录（调用方据此决定 warning/debug）。"""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._blocked_until = now + _CANDLE_FORBIDDEN_COOLDOWN_SECONDS
+            first = not self._warned
+            self._warned = True
+            return first
+
+    def reset(self) -> None:
+        with self._lock:
+            self._blocked_until = 0.0
+            self._warned = False
+
+
+_candle_access = _CandleAccessState()
 
 
 class FinnhubFetcher(BaseFetcher):
@@ -38,6 +75,17 @@ class FinnhubFetcher(BaseFetcher):
     def _is_us_stock(self, stock_code: str) -> bool:
         return is_us_stock_code(stock_code)
 
+    def is_available_for_request(self, capability: str = "") -> bool:
+        """日线请求在 candle 403 冷却期内不可用；/quote 等其他能力不受影响。"""
+        if capability == "daily_data" and _candle_access.is_blocked():
+            return False
+        return True
+
+    @staticmethod
+    def reset_candle_access_state() -> None:
+        """清除 candle 403 冷却状态（测试 / 诊断用）。"""
+        _candle_access.reset()
+
     def _fetch_raw_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         if not self._api_key:
             raise DataFetchError("[Finnhub] API key not configured")
@@ -45,6 +93,13 @@ class FinnhubFetcher(BaseFetcher):
             raise DataFetchError(f"[Finnhub] {stock_code} is not a US stock")
 
         symbol = stock_code.strip().upper()
+        if _candle_access.is_blocked():
+            logger.debug(
+                "[Finnhub] /stock/candle 无权限（403）冷却中，跳过 %s 日线请求", symbol
+            )
+            raise DataFetchError(
+                "[Finnhub] /stock/candle forbidden (403) for current plan; skipped during cooldown"
+            )
         start_ts = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
         end_ts = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
 
@@ -60,6 +115,23 @@ class FinnhubFetcher(BaseFetcher):
         try:
             self.random_sleep(0.3, 0.8)
             resp = requests.get(url, params=params, timeout=15)
+        except Exception as e:
+            raise DataFetchError(f"[Finnhub] HTTP request failed for {symbol}: {e}") from e
+
+        if getattr(resp, 'status_code', None) == 403:
+            if _candle_access.mark_forbidden():
+                logger.warning(
+                    "[Finnhub] /stock/candle 返回 403（当前套餐不含历史 K 线），"
+                    "%d 小时内不再请求该接口，美股日线交由后续数据源提供",
+                    _CANDLE_FORBIDDEN_COOLDOWN_SECONDS // 3600,
+                )
+            else:
+                logger.debug("[Finnhub] /stock/candle 再次返回 403，冷却期已刷新")
+            raise DataFetchError(
+                f"[Finnhub] /stock/candle forbidden (403) for {symbol}: plan has no historical candle access"
+            )
+
+        try:
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:

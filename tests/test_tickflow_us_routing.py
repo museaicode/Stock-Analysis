@@ -59,10 +59,16 @@ class _FakeClient:
 
 
 def _daily_rows(symbol):
+    # US daily bars are stamped at the 16:00 America/New_York close
+    # (2024-01-02 / 2024-01-03 16:00 ET == 21:00 UTC).
+    if symbol.endswith(".US"):
+        stamps = (1704229200000, 1704315600000)
+    else:
+        stamps = (1704153600000, 1704240000000)
     return pd.DataFrame(
         [
-            {"symbol": symbol, "timestamp": 1704153600000, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000, "amount": 1000},
-            {"symbol": symbol, "timestamp": 1704240000000, "open": 10, "high": 12, "low": 10, "close": 11, "volume": 2000, "amount": 2500},
+            {"symbol": symbol, "timestamp": stamps[0], "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1000, "amount": 1000},
+            {"symbol": symbol, "timestamp": stamps[1], "open": 10, "high": 12, "low": 10, "close": 11, "volume": 2000, "amount": 2500},
         ]
     )
 

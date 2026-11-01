@@ -11,6 +11,7 @@ A股自选股智能分析系统 - 核心分析流水线
 4. 提供股票分析的核心功能
 """
 
+import dataclasses
 import logging
 import inspect
 import threading
@@ -657,6 +658,14 @@ class StockAnalysisPipeline:
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
+                    # 收盘后/非交易日：实时涨跌幅与日 K 线最后两根常规交易日 K 线校验
+                    realtime_quote = self._reconcile_realtime_change_with_daily(
+                        realtime_quote,
+                        df,
+                        code=code,
+                        market=market,
+                        market_phase_context=market_phase_context_dict,
+                    )
                     # Issue #234: Augment with realtime for intraday MA calculation
                     if self.config.enable_realtime_quote and realtime_quote:
                         df = self._augment_historical_with_realtime(
@@ -1118,6 +1127,14 @@ class StockAnalysisPipeline:
                 market_today = get_market_now(
                     get_market_for_stock(normalize_stock_code(enhanced.get('code', '')))
                 ).date().isoformat()
+                # 收盘后/盘前/非交易日：实时行情代表的是最近一个已收盘交易日，
+                # "当日"行情与涨跌幅应标记为该交易日，而不是市场本地自然日。
+                if (
+                    isinstance(market_phase_context, dict)
+                    and market_phase_context.get("is_partial_bar") is False
+                    and market_phase_context.get("effective_daily_bar_date")
+                ):
+                    market_today = str(market_phase_context["effective_daily_bar_date"])[:10]
                 source = getattr(realtime_quote, 'source', None)
                 source_name = getattr(source, 'value', source)
                 source_name = str(source_name) if source_name is not None else 'unknown'
@@ -2739,6 +2756,110 @@ class StockAnalysisPipeline:
             return "短期走弱 🔽"
         else:
             return "震荡整理 ↔️"
+
+    # 实时涨跌幅与日 K 线涨跌幅允许的最大偏差（百分点）
+    _REALTIME_DAILY_PCT_TOLERANCE = 1.0
+    # 目前只对美股启用：美股实时源存在把盘前/盘后成交当作前收盘价的风险，
+    # 而 A 股/港股的除权参考价会让"日 K 收盘价相除"与官方涨跌幅天然不一致。
+    _REALTIME_DAILY_RECONCILE_MARKETS = frozenset({"us"})
+
+    @classmethod
+    def _reconcile_realtime_change_with_daily(
+        cls,
+        realtime_quote: Any,
+        daily_df: Optional[pd.DataFrame],
+        *,
+        code: str,
+        market: Optional[str],
+        market_phase_context: Optional[Dict[str, Any]],
+    ) -> Any:
+        """收盘后/非交易日以日 K 线校验实时行情涨跌幅。
+
+        仅当当前不处于盘中（``is_partial_bar is False``）、且日 K 线最后一根就是
+        最近一个已收盘交易日（``effective_daily_bar_date``）时比较；此时实时
+        行情展示的"当日涨跌幅"应等于最近已收盘交易日相对前一交易日的涨跌幅。
+        两者相差超过 ``_REALTIME_DAILY_PCT_TOLERANCE`` 个百分点时以日 K 线为准，
+        并记录 warning（含两边数值与数据源）。返回新的行情对象，不修改入参。
+        """
+        if realtime_quote is None or daily_df is None or len(daily_df) < 2:
+            return realtime_quote
+        if market not in cls._REALTIME_DAILY_RECONCILE_MARKETS:
+            return realtime_quote
+        if not dataclasses.is_dataclass(realtime_quote):
+            return realtime_quote
+        phase_ctx = market_phase_context if isinstance(market_phase_context, dict) else {}
+        if phase_ctx.get("is_partial_bar") is not False:
+            # 盘中或阶段未知：实时价与日 K 不属于同一根已收盘 K 线，不做比较
+            return realtime_quote
+        if not {"date", "close"}.issubset(daily_df.columns):
+            return realtime_quote
+
+        bars = daily_df[["date", "close"] + (["data_source"] if "data_source" in daily_df.columns else [])].copy()
+        bars["date"] = pd.to_datetime(bars["date"], errors="coerce")
+        bars["close"] = pd.to_numeric(bars["close"], errors="coerce")
+        bars = bars.dropna(subset=["date", "close"]).sort_values("date")
+        if len(bars) < 2:
+            return realtime_quote
+        last_bar = bars.iloc[-1]
+        prev_bar = bars.iloc[-2]
+        last_date = last_bar["date"].date()
+        effective_date = phase_ctx.get("effective_daily_bar_date")
+        if effective_date and last_date.isoformat() != str(effective_date)[:10]:
+            logger.debug(
+                "%s 日 K 线最后一根 %s 不是最近已收盘交易日 %s，跳过实时涨跌幅校验",
+                code, last_date, effective_date,
+            )
+            return realtime_quote
+
+        prev_close = float(prev_bar["close"])
+        last_close = float(last_bar["close"])
+        if prev_close <= 0:
+            return realtime_quote
+        daily_pct = (last_close - prev_close) / prev_close * 100
+
+        realtime_pct = getattr(realtime_quote, "change_pct", None)
+        try:
+            realtime_pct = float(realtime_pct) if realtime_pct is not None else None
+        except (TypeError, ValueError):
+            realtime_pct = None
+        if realtime_pct is None:
+            return realtime_quote
+        if abs(realtime_pct - daily_pct) <= cls._REALTIME_DAILY_PCT_TOLERANCE:
+            return realtime_quote
+
+        source = getattr(realtime_quote, "source", None)
+        realtime_source = str(getattr(source, "value", source) or "unknown")
+        daily_source = str(last_bar.get("data_source") or "unknown")
+        logger.warning(
+            "%s 实时行情涨跌幅与日 K 线不一致，以日 K 线为准: "
+            "realtime(source=%s, price=%s, pre_close=%s, change_pct=%.2f%%) vs "
+            "daily(source=%s, %s close=%.4f, %s close=%.4f, change_pct=%.2f%%), "
+            "diff=%.2fpp > %.2fpp",
+            code,
+            realtime_source,
+            getattr(realtime_quote, "price", None),
+            getattr(realtime_quote, "pre_close", None),
+            realtime_pct,
+            daily_source,
+            prev_bar["date"].date(),
+            prev_close,
+            last_date,
+            last_close,
+            daily_pct,
+            abs(realtime_pct - daily_pct),
+            cls._REALTIME_DAILY_PCT_TOLERANCE,
+        )
+
+        updates: Dict[str, Any] = {
+            "change_pct": round(daily_pct, 2),
+            "change_amount": round(last_close - prev_close, 4),
+            "pre_close": prev_close,
+        }
+        high = getattr(realtime_quote, "high", None)
+        low = getattr(realtime_quote, "low", None)
+        if isinstance(high, (int, float)) and isinstance(low, (int, float)):
+            updates["amplitude"] = round((high - low) / prev_close * 100, 2)
+        return dataclasses.replace(realtime_quote, **updates)
 
     def _augment_historical_with_realtime(
         self,

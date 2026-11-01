@@ -195,6 +195,13 @@ LONGBRIDGE_APP_SECRET=your_app_secret
 LONGBRIDGE_ACCESS_TOKEN=your_access_token
 ```
 
+#### 美股日 K 与涨跌幅口径
+
+- **Finnhub 免费套餐不含历史 K 线**：`/stock/candle` 返回 403 时，进程内记住该结论，24 小时内不再请求 candle 接口，美股日 K 自动交由 TickFlow、AlphaVantage、YFinance 等后续数据源提供；首次记录一条 warning，之后只记 debug。Finnhub `/quote` 等其他接口不受影响，照常用于补充字段。
+- **TickFlow 美股交易日**：`.US` 标的的请求起止时间按 `America/New_York` 计算日期边界；返回结果优先使用 `trade_date`，只有毫秒时间戳时美股按 `America/New_York`、A 股按 `Asia/Shanghai` 换算交易日。北京时间周日分析时，最后一根美股 K 线是美东周五。
+- **前收盘价只取常规时段**：YFinance 实时行情的前收盘价使用 `regular_market_previous_close`（基于不含盘前盘后的日 K 线），缺失时再用 Yahoo `regularMarketPreviousClose` 或 `prepost=False` 日 K 线；不再使用 `fast_info.previous_close`（该字段由含盘后的 1 小时 K 线得到，财报盘后大幅波动时会让涨跌幅严重失真）。
+- **报告“当日涨跌幅”**：盘中显示实时涨跌幅；收盘后、盘前和非交易日显示最近一个已收盘交易日相对前一交易日的涨跌幅，行情日期也标记为该交易日。此时若实时涨跌幅与日 K 线最后两根常规交易日 K 线算出的涨跌幅相差超过 1 个百分点，以日 K 线为准并记录 warning（含两边数值和数据源）。该校验目前只对美股启用。
+
 ## 用户可见提示建议
 
 对外沟通时建议区分三类情况：
