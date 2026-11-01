@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import requests
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STOCK_INDEX_REMOTE_URL = (
-    "https://raw.githubusercontent.com/ZhuLinsen/daily_stock_analysis/"
+    "https://raw.githubusercontent.com/museaicode/Stock-Analysis/"
     "main/apps/dsa-web/public/stocks.index.json"
 )
 DEFAULT_STOCK_INDEX_CACHE_PATH = REPO_ROOT / "data" / "cache" / "stocks.index.json"
@@ -32,6 +33,8 @@ _REMOTE_REFRESH_LOCK = Lock()
 _REMOTE_FAILURE_LOCK = Lock()
 _REMOTE_CONSECUTIVE_FAILURES = 0
 _REMOTE_SUPPRESS_UNTIL = 0.0
+_INVALID_URL_WARNED: set[str] = set()
+_INVALID_URL_WARNED_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -55,11 +58,53 @@ class RemoteStockIndexResult:
     error: Optional[str] = None
 
 
+def normalize_stock_index_remote_url(raw_url: Any) -> Optional[str]:
+    """Return a usable http(s) URL, or ``None`` when the value is empty or invalid."""
+    if not isinstance(raw_url, str):
+        return None
+    url = raw_url.strip()
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        return None
+    return url
+
+
+def _warn_invalid_remote_url_once(raw_url: Any) -> None:
+    key = repr(raw_url)
+    with _INVALID_URL_WARNED_LOCK:
+        if key in _INVALID_URL_WARNED:
+            return
+        _INVALID_URL_WARNED.add(key)
+    shown = raw_url.strip() if isinstance(raw_url, str) else raw_url
+    logger.warning(
+        "[stock-index] STOCK_INDEX_REMOTE_URL is empty or not a valid http(s) URL (%r); "
+        "remote index update skipped, using local index",
+        shown,
+    )
+
+
 def settings_from_config(config: Any) -> RemoteStockIndexSettings:
-    """Build remote stock-index settings from the application config object."""
+    """Build remote stock-index settings from the application config object.
+
+    ``STOCK_INDEX_REMOTE_URL`` overrides the source. An empty or invalid value
+    disables remote refresh (logged once) instead of failing startup.
+    """
+    enabled = bool(getattr(config, "stock_index_remote_update_enabled", True))
+    raw_url = getattr(config, "stock_index_remote_url", DEFAULT_STOCK_INDEX_REMOTE_URL)
+    url = normalize_stock_index_remote_url(raw_url)
+    if url is None:
+        if enabled:
+            _warn_invalid_remote_url_once(raw_url)
+        enabled = False
+        url = ""
     return RemoteStockIndexSettings(
-        enabled=bool(getattr(config, "stock_index_remote_update_enabled", True)),
-        url=DEFAULT_STOCK_INDEX_REMOTE_URL,
+        enabled=enabled,
+        url=url,
         ttl_hours=DEFAULT_STOCK_INDEX_REMOTE_TTL_HOURS,
         timeout_seconds=DEFAULT_STOCK_INDEX_REMOTE_TIMEOUT_SECONDS,
     )
@@ -248,7 +293,11 @@ def refresh_remote_stock_index_cache(settings: RemoteStockIndexSettings) -> Remo
     except Exception as exc:  # noqa: BLE001 - remote refresh is best-effort by design.
         message = str(exc)
         failures = _record_remote_failure(current_time, settings.ttl_hours)
-        logger.warning(
+        # Only the first failure of a streak is a warning; retries until the
+        # suppression window are debug-only so serving /stocks.index.json
+        # repeatedly (e.g. private repo -> 404) does not flood the log.
+        log = logger.warning if failures == 1 else logger.debug
+        log(
             "[stock-index] remote update failed (%d/%d), using local fallback: %s",
             failures,
             DEFAULT_STOCK_INDEX_REMOTE_MAX_FAILURES,
@@ -263,3 +312,5 @@ def refresh_remote_stock_index_cache(settings: RemoteStockIndexSettings) -> Remo
 
 def _reset_remote_stock_index_state_for_tests() -> None:
     _reset_remote_failure_state()
+    with _INVALID_URL_WARNED_LOCK:
+        _INVALID_URL_WARNED.clear()

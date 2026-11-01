@@ -972,7 +972,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "STOCK_INDEX_REMOTE_UPDATE_ENABLED": {
         "title": "Remote Stock Index Updates",
-        "description": "Automatically refresh the local stock autocomplete index from the built-in GitHub main source.",
+        "description": "Automatically refresh the local stock autocomplete index from STOCK_INDEX_REMOTE_URL (defaults to this repository's GitHub main branch).",
         "category": "data_source",
         "data_type": "boolean",
         "ui_control": "switch",

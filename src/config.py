@@ -38,6 +38,7 @@ from src.notification_contracts import (
     is_feishu_static_configured,
 )
 from src.services.stock_list_parser import split_stock_list
+from src.services.stock_index_remote_service import DEFAULT_STOCK_INDEX_REMOTE_URL
 from src.llm.backend_registry import (
     AUTO_AGENT_BACKEND_ID,
     GENERATION_ONLY_BACKEND_IDS,
@@ -1004,6 +1005,8 @@ class Config:
     longbridge_access_token: Optional[str] = None
     longbridge_oauth_client_id: Optional[str] = None
     stock_index_remote_update_enabled: bool = True
+    # Empty / invalid values disable remote refresh (see stock_index_remote_service).
+    stock_index_remote_url: str = DEFAULT_STOCK_INDEX_REMOTE_URL
 
     # === Built-in stock screening ===
     screening_enabled: bool = False
@@ -1961,6 +1964,7 @@ class Config:
                 os.getenv('STOCK_INDEX_REMOTE_UPDATE_ENABLED'),
                 default=True,
             ),
+            stock_index_remote_url=os.getenv('STOCK_INDEX_REMOTE_URL', DEFAULT_STOCK_INDEX_REMOTE_URL),
             generation_backend=generation_backend,
             generation_fallback_backend=generation_fallback_backend,
             generation_backend_timeout_seconds=generation_backend_timeout_seconds,
