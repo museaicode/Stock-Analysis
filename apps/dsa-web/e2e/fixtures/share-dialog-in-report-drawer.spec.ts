@@ -14,35 +14,41 @@ const REPORT_MARKDOWN = `# 贵州茅台 (600519) 决策报告
 AI 生成，仅供参考，不构成投资建议。
 `;
 
-const posterPng = async (page: Page): Promise<Buffer> => {
+// Distinct posters per layout: the full report is a much taller long image.
+const posterPng = async (page: Page, layout: 'card' | 'full'): Promise<Buffer> => {
   const poster = await page.context().newPage();
-  await poster.setViewportSize({ width: 540, height: 720 });
+  const height = layout === 'full' ? 1400 : 720;
+  await poster.setViewportSize({ width: 540, height });
+  const sections = layout === 'full'
+    ? ['核心结论', '数据透视', '作战计划', '检查清单', '风险提示']
+      .map((title) => `<div style="margin-top:16px;padding:20px;border-radius:12px;background:#fff;border:1px solid #dbe4f3"><div style="font-size:22px;font-weight:700">${title}</div><p style="font-size:16px;color:#334155">完整报告正文 · ${title}</p></div>`)
+      .join('')
+    : '<div style="margin-top:16px;padding:24px;border-radius:16px;background:#fff;border:1px solid #dbe4f3"><div style="font-size:22px;color:#16a34a">买入 · 评分 72</div></div>';
   await poster.setContent(`
     <body style="margin:0;font-family:sans-serif;background:linear-gradient(180deg,#eef4ff,#ffffff)">
       <div style="padding:40px">
         <div style="font-size:36px;font-weight:700">贵州茅台 600519</div>
-        <div style="margin-top:16px;padding:24px;border-radius:16px;background:#fff;border:1px solid #dbe4f3">
-          <div style="font-size:22px;color:#16a34a">买入 · 评分 72</div>
-        </div>
+        <div style="font-size:18px;color:#64748b">${layout === 'full' ? '完整分析报告' : '个股决策卡'}</div>
+        ${sections}
       </div>
     </body>`);
-  const body = await poster.screenshot({ type: 'png' });
+  const body = await poster.screenshot({ type: 'png', fullPage: true });
   await poster.close();
   return body;
 };
 
-const mountReportDrawer = async (page: Page) => {
-  const image = await posterPng(page);
+const mountReportDrawer = async (page: Page, requestedLayouts: string[] = []) => {
+  const images = { card: await posterPng(page, 'card'), full: await posterPng(page, 'full') };
   await page.route('**/api/v1/history/21/markdown', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ content: REPORT_MARKDOWN }),
   }));
-  await page.route('**/api/v1/history/21/share-image', (route) => route.fulfill({
-    status: 200,
-    contentType: 'image/png',
-    body: image,
-  }));
+  await page.route(/\/api\/v1\/history\/21\/share-image(\?.*)?$/, (route) => {
+    const layout = new URL(route.request().url()).searchParams.get('layout') === 'full' ? 'full' : 'card';
+    requestedLayouts.push(layout);
+    return route.fulfill({ status: 200, contentType: 'image/png', body: images[layout] });
+  });
   await page.route('**/src/main.tsx', (route) => route.fulfill({
     contentType: 'application/javascript',
     body: `
@@ -81,7 +87,8 @@ test('share dialog opened from the full report drawer sits on top and closes lay
   await page.addInitScript(() => {
     window.localStorage.setItem('dsa.uiLanguage', 'zh');
   });
-  await mountReportDrawer(page);
+  const requestedLayouts: string[] = [];
+  await mountReportDrawer(page, requestedLayouts);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/');
 
@@ -99,9 +106,41 @@ test('share dialog opened from the full report drawer sits on top and closes lay
   // Focus moved into the share dialog.
   expect(await shareDialog.evaluate((node) => node.contains(document.activeElement))).toBe(true);
 
-  const shot = testInfo.outputPath('share-dialog-in-report-drawer-1280.png');
+  // Opened from the drawer, the dialog defaults to the full report long image.
+  const layoutSwitch = shareDialog.getByRole('group', { name: '分享图版式' });
+  await expect(layoutSwitch.getByRole('button', { name: '完整报告' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(layoutSwitch.getByRole('button', { name: '决策卡' })).toHaveAttribute('aria-pressed', 'false');
+  const preview = shareDialog.getByRole('img', { name: '分享图预览' });
+  await expect(preview).toHaveAttribute('data-layout', 'full');
+  const naturalSize = () => preview.evaluate((node: HTMLImageElement) => ({
+    src: node.currentSrc || node.src,
+    height: node.naturalHeight,
+  }));
+  await expect.poll(async () => (await naturalSize()).height).toBeGreaterThan(0);
+  const fullImage = await naturalSize();
+  expect(requestedLayouts).toEqual(['full']);
+
+  const shot = testInfo.outputPath('share-dialog-in-report-drawer-full-1280.png');
   await page.screenshot({ path: shot, animations: 'disabled' });
-  await testInfo.attach('share-dialog-in-report-drawer-1280', { path: shot, contentType: 'image/png' });
+  await testInfo.attach('share-dialog-in-report-drawer-full-1280', { path: shot, contentType: 'image/png' });
+
+  // Switching to the decision card requests the card layout and swaps the preview.
+  await layoutSwitch.getByRole('button', { name: '决策卡' }).click();
+  await expect(layoutSwitch.getByRole('button', { name: '决策卡' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(preview).toHaveAttribute('data-layout', 'card');
+  await expect.poll(async () => (await naturalSize()).src).not.toBe(fullImage.src);
+  await expect.poll(async () => (await naturalSize()).height).toBeLessThan(fullImage.height);
+  expect(requestedLayouts).toEqual(['full', 'card']);
+  const cardShot = testInfo.outputPath('share-dialog-in-report-drawer-card-1280.png');
+  await page.screenshot({ path: cardShot, animations: 'disabled' });
+  await testInfo.attach('share-dialog-in-report-drawer-card-1280', { path: cardShot, contentType: 'image/png' });
+
+  // Switching back reuses the cached full image without another request.
+  await layoutSwitch.getByRole('button', { name: '完整报告' }).click();
+  await expect(preview).toHaveAttribute('data-layout', 'full');
+  expect((await naturalSize()).src).toBe(fullImage.src);
+  expect(requestedLayouts).toEqual(['full', 'card']);
+  expect(await dialogCentreIsOnTop(page)).toBe(true);
 
   // Print mode keeps the share dialog hidden; only the report prints.
   await page.emulateMedia({ media: 'print' });

@@ -32,7 +32,7 @@
 | `full` | 完整报告 Markdown 全文（所有章节、表格、检查清单），页眉品牌栏、标题、底部风险提示与已配置的品牌信息保持不变，副标题显示“完整分析报告” | 需要在推送中阅读完整分析 |
 
 - `full` 对单股、多股汇总、大盘复盘推送一致生效；企业微信超 2MB 的长图会被压缩/切图（见 [通知渠道说明](notifications.md#企业微信图片大小限制)）。完整正文超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时跳过转图、回退文本。
-- Web / 桌面端“分享”按钮（`/api/v1/history/{id}/share-image` 与 `/share-image-html`）固定使用 `card`，不受该配置影响。
+- Web / 桌面端“分享”按钮（`/api/v1/history/{id}/share-image` 与 `/share-image-html`）不读取该配置，而是由请求参数 `layout` 决定版式，见下文 [分享图版式与 layout 参数](#分享图版式与-layout-参数)。
 
 分享图需要运行环境提供对应语言字体。官方 Docker 镜像已内置 Noto CJK 字体；Debian/Ubuntu 源码部署使用默认 `wkhtmltoimage` 引擎时，应安装 `wkhtmltopdf fonts-noto-cjk`。如果只安装转图工具而缺少 CJK 字体，中文或韩文可能在 PNG 中消失，只剩数字、英文和边框。
 `fonts-noto-cjk` 是 Debian 字体包名，不代表新增日文报告语言。项目的报告输出仍只支持 `REPORT_LANGUAGE=zh|en|ko`；日股个股和日本市场复盘中的日文原生名称由通用 Noto CJK fallback 覆盖，页面语言仍跟随所选报告语言，不会根据 `7203.T` 或 `region=jp` 切换成未支持的 `ja` 输出。
@@ -56,23 +56,46 @@ SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 
 ## Web 一键分享
 
-浏览器版历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。页面加载报告时不会生成图片；只有用户点击“分享”后，页面才调用 `GET /api/v1/history/{record_id}/share-image` 按需生成图片。
+浏览器版历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。页面加载报告时不会生成图片；只有用户点击“分享”后，页面才调用 `GET /api/v1/history/{record_id}/share-image?layout=<card|full>` 按需生成图片。
+
+### 分享图版式与 layout 参数
+
+分享图有两种版式，正文渲染与上文推送图的 `card` / `full` 完全一致（同一套 `build_share_image_html(..., layout=...)`）：
+
+| 版式 | 弹窗内名称（zh / en） | 内容 |
+| --- | --- | --- |
+| `card` | 决策卡 / Card | 个股决策卡或市场复盘卡，只提炼结论、点位、技术、风险、持仓等模块 |
+| `full` | 完整报告 / Full report | 完整报告长图：MIUSIAI 品牌页眉、完整正文（所有章节、表格、检查清单）、底部风险提示和按配置显示的品牌信息 |
+
+各入口打开预览弹窗时的默认版式：
+
+| 入口 | 默认版式 |
+| --- | --- |
+| “完整分析报告”抽屉（个股报告与大盘复盘历史共用）中的“分享” | `full` |
+| 个股报告页、大盘复盘报告页上的“分享” | `card` |
+
+- 预览弹窗顶部提供“决策卡 / 完整报告”分段切换，默认选中当前入口对应的版式。切换到尚未生成的版式时重新请求并显示加载状态；已生成过的版式按记录缓存在当前页面组件中，切回或关闭后再打开同一记录都不重复请求。某个版式生成失败时会提示原因：若另一版式已生成则切回该版式，否则关闭弹窗，可再次点击“分享”重试。
+- 下载、复制图片、系统分享三个按钮始终使用当前选中版式的图片。
+- 接口参数：`GET /api/v1/history/{record_id}/share-image` 与 `GET /api/v1/history/{record_id}/share-image-html` 都接受查询参数 `layout=card|full`，**默认 `card`**（不传参数的旧调用方行为不变），大小写不敏感；其他值返回 **400**（`{"detail": {"error": "invalid_layout", ...}}`），不静默回退，便于调用方发现拼写错误。
+- `layout` 与推送图配置 `MARKDOWN_TO_IMAGE_LAYOUT` 相互独立：推送图只看配置，Web / 桌面分享只看请求参数。
+- 服务端不缓存分享图：每次请求都按本次 `layout` 重新渲染，响应带 `Cache-Control: no-store`，两种版式不会互相串用；版式缓存只存在于前端弹窗组件内。
+- 完整报告正文同样受 `MARKDOWN_TO_IMAGE_MAX_CHARS` 限制：超长时 `share-image` 返回 503（渲染器返回空），`share-image-html` 返回 413。
 
 交互分两步，避免异步生成图片导致浏览器的“临时用户激活”过期：
 
-1. 点击“分享”后立即打开预览弹窗，显示“正在生成分享图...”加载状态；图片返回后在弹窗内展示预览。同一记录再次打开弹窗会复用已生成的图片。
+1. 点击“分享”后立即打开预览弹窗，显示“正在生成分享图...”加载状态；图片返回后在弹窗内展示预览。同一记录再次打开弹窗会复用已生成的同版式图片。
 2. 弹窗底部按浏览器能力显示操作按钮，复制与系统分享都由弹窗内的这一次新点击同步触发：
-   - “下载图片”：始终显示，文件名为 `<报告标题>-<记录 ID>.<扩展名>`，扩展名与实际图片格式一致（JPEG 为 `.jpg`）。
-   - “复制图片”：仅在 `navigator.clipboard.write` 与 `ClipboardItem` 均可用时显示。浏览器剪贴板普遍只接受 PNG，JPEG 图片会在写入时于浏览器内转为 PNG（以 Promise 形式交给 `ClipboardItem`，不影响用户激活）；超长图片在部分移动端浏览器上可能因 Canvas 尺寸限制而复制失败，此时会提示失败，可改用下载。
+   - “下载图片”：始终显示，文件名为 `<报告标题>-<记录 ID>_<版式>.<扩展名>`（例如 `贵州茅台-600519-42_full.jpg`），扩展名与实际图片格式一致（JPEG 为 `.jpg`）。
+   - “复制图片”：仅在 `navigator.clipboard.write` 与 `ClipboardItem` 均可用时显示。浏览器剪贴板普遍只接受 PNG，JPEG 图片会在写入时于浏览器内转为 PNG（以 Promise 形式交给 `ClipboardItem`，不影响用户激活）；完整报告长图在部分浏览器（例如 iOS Safari 的 Canvas 尺寸限制）上可能复制失败，此时提示“复制图片失败”并建议改用“下载图片”。
    - “系统分享”：仅在 `navigator.canShare({ files })` 返回 true 时显示，调用 `navigator.share` 打开系统分享面板。
 
 预览弹窗与失败提示统一渲染到 `document.body`，层级高于“完整分析报告”抽屉（层级常量见 `apps/dsa-web/src/components/common/overlayLayers.ts`）。在抽屉内打开弹窗时：点击弹窗内的图片或按钮不会关闭任何层；点击弹窗遮罩、关闭按钮或按 Esc 只关闭弹窗，抽屉保持打开，再按一次 Esc 才关闭抽屉；弹窗打开时键盘焦点限定在弹窗内，关闭后回到“分享”按钮。打印 / 导出 PDF 时弹窗不会出现在输出中。
 
 图片生成接口失败、下载 / 复制 / 系统分享失败（包括浏览器拒绝操作的 `NotAllowedError`）都会在页面右下角显示提示；接口失败时会关闭弹窗并展示服务端返回的原因（例如转图工具不可用），可直接再次点击“分享”重试。用户在系统分享面板中主动取消（`AbortError`）不提示。
 
-`share-image` 接口默认返回压缩后的 JPEG（quality 85，`Content-Type: image/jpeg`，下载文件名 `dsa-report-<id>.jpg`）。默认 `wkhtmltoimage` 引擎输出的完整报告长图 PNG 常达数 MB 至数十 MB（1080px 宽），转 JPEG 后体积大幅下降（本地 1080×7095 样例：PNG 30.7MB → JPEG 0.66MB），明显缩短首次打开弹窗的等待时间；Playwright 引擎输出的 PNG 本身压缩率较高，转 JPEG 收益较小（同类样例约减少 28%）。压缩复用企业微信长图使用的 Pillow 公共函数（`src/utils/image_compress.py`），带透明通道时铺白底；若未安装 Pillow、图片无法解码或高度超过 JPEG 单边上限（65500px），接口回退为原始 PNG，此时 `Content-Type` 为 `image/png`、扩展名为 `.png`，前端按实际格式处理。
+`share-image` 接口两种版式都默认返回压缩后的 JPEG（quality 85，`Content-Type: image/jpeg`，`Content-Disposition` 文件名 `dsa-report-<id>_<layout>.jpg`，例如 `dsa-report-42_card.jpg` / `dsa-report-42_full.jpg`）。默认 `wkhtmltoimage` 引擎输出的完整报告长图 PNG 常达数 MB 至数十 MB（1080px 宽），转 JPEG 后体积大幅下降（本地 1080×7095 样例：PNG 30.7MB → JPEG 0.66MB），明显缩短首次打开弹窗的等待时间；Playwright 引擎输出的 PNG 本身压缩率较高，转 JPEG 收益较小（同类样例约减少 28%）。压缩复用企业微信长图使用的 Pillow 公共函数（`src/utils/image_compress.py`），带透明通道时铺白底；若未安装 Pillow、图片无法解码或高度超过 JPEG 单边上限（65500px），接口回退为原始 PNG，此时 `Content-Type` 为 `image/png`、扩展名为 `.png`（如 `dsa-report-42_full.png`），前端按实际格式处理。
 
-Electron 桌面端同样展示“分享”按钮，但不依赖额外分发 `wkhtmltoimage`、`markdown-to-file` 或 Playwright。用户点击后，桌面 preload 通过受限 IPC 让主进程打开本地 `GET /api/v1/history/{record_id}/share-image-html`，使用 Electron 自带的隐藏 Chromium 窗口按完整页面高度截图为 PNG，随后打开与浏览器一致的预览弹窗（桌面端图片保持 PNG）。IPC 只接受正整数记录 ID，主进程只允许当前桌面窗口请求本次启动时确定的后端 origin（包括显式配置的局域网 `WEBUI_HOST`），HTML 响应使用 CSP 禁止脚本、外部资源和网络加载。
+Electron 桌面端同样展示“分享”按钮，但不依赖额外分发 `wkhtmltoimage`、`markdown-to-file` 或 Playwright。用户点击后，桌面 preload 通过受限 IPC 让主进程打开本地 `GET /api/v1/history/{record_id}/share-image-html?layout=<card|full>`（版式规则与浏览器一致），使用 Electron 自带的隐藏 Chromium 窗口按完整页面高度截图为 PNG，随后打开与浏览器一致的预览弹窗（桌面端图片保持 PNG）。IPC 只接受正整数记录 ID 与 `card` / `full` 版式，主进程只允许当前桌面窗口请求本次启动时确定的后端 origin（包括显式配置的局域网 `WEBUI_HOST`），HTML 响应使用 CSP 禁止脚本、外部资源和网络加载。
 
 Web 手工生成不受 `MARKDOWN_TO_IMAGE_CHANNELS` 限制，但服务端仍需配置可用的 `MD2IMG_ENGINE`。桌面端手工生成复用 Electron，不读取 `MD2IMG_ENGINE`。Web 使用 Playwright 时先执行：
 

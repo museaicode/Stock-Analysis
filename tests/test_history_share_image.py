@@ -66,7 +66,7 @@ def test_history_share_image_returns_compressed_jpeg(monkeypatch):
     assert response.status_code == 200
     assert response.media_type == "image/jpeg"
     assert response.headers["content-type"] == "image/jpeg"
-    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-17.jpg"'
+    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-17_card.jpg"'
     assert response.headers["cache-control"] == "no-store"
     assert response.body[:3] == b"\xff\xd8\xff"
     # 体积明显小于原始 PNG
@@ -109,7 +109,7 @@ def test_history_share_image_keeps_png_when_jpeg_conversion_unavailable(monkeypa
 
     assert response.media_type == "image/png"
     assert response.body == png_bytes
-    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-23.png"'
+    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-23_card.png"'
 
 
 def test_history_share_image_falls_back_to_png_for_undecodable_bytes(monkeypatch):
@@ -136,7 +136,7 @@ def test_history_share_image_falls_back_to_png_for_undecodable_bytes(monkeypatch
     assert response.status_code == 200
     assert response.media_type == "image/png"
     assert response.body.startswith(b"\x89PNG")
-    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-17.png"'
+    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-17_card.png"'
     assert calls[0][1]["structured_payload"] is raw_result
     assert calls[0][1]["max_chars"] == 15000
 

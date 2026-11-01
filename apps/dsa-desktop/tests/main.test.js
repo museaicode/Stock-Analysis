@@ -182,7 +182,7 @@ test('buildDesktopShareImageUrl restricts rendering to the configured backend re
 
   assert.equal(
     mainModule.buildDesktopShareImageUrl('http://127.0.0.1:8123/?desktop_version=3.30.0', 17),
-    'http://127.0.0.1:8123/api/v1/history/17/share-image-html'
+    'http://127.0.0.1:8123/api/v1/history/17/share-image-html?layout=card'
   );
   assert.throws(
     () => mainModule.buildDesktopShareImageUrl(
@@ -198,7 +198,15 @@ test('buildDesktopShareImageUrl restricts rendering to the configured backend re
       18,
       'http://192.168.1.9:8123'
     ),
-    'http://192.168.1.9:8123/api/v1/history/18/share-image-html'
+    'http://192.168.1.9:8123/api/v1/history/18/share-image-html?layout=card'
+  );
+  assert.equal(
+    mainModule.buildDesktopShareImageUrl('http://127.0.0.1:8123/', 19, '', 'full'),
+    'http://127.0.0.1:8123/api/v1/history/19/share-image-html?layout=full'
+  );
+  assert.throws(
+    () => mainModule.buildDesktopShareImageUrl('http://127.0.0.1:8123/', 19, '', 'poster'),
+    /Invalid share image layout/
   );
   assert.throws(
     () => mainModule.buildDesktopShareImageUrl('http://127.0.0.1:8123/', 0),
@@ -268,7 +276,7 @@ test('renderDesktopShareImage captures the complete local poster and closes its 
 
   assert.equal(windows.length, 1);
   assert.equal('enableLargerThanScreen' in windows[0].options, false);
-  assert.equal(windows[0].loadedUrl, 'http://127.0.0.1:8123/api/v1/history/29/share-image-html');
+  assert.equal(windows[0].loadedUrl, 'http://127.0.0.1:8123/api/v1/history/29/share-image-html?layout=card');
   assert.deepEqual(windows[0].contentSize, [1080, 1840]);
   assert.deepEqual(windows[0].captureRect, { x: 0, y: 0, width: 1080, height: 1840 });
   assert.equal(windows[0].isDestroyed(), true);

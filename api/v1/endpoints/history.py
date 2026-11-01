@@ -63,6 +63,7 @@ from src.md2img import markdown_to_image
 from src.utils.image_compress import compress_image_to_jpeg
 from src.share_image import (
     SHARE_IMAGE_LAYOUT_CARD,
+    SHARE_IMAGE_LAYOUTS,
     ShareImageBranding,
     build_share_image_html,
     share_image_branding_from_config,
@@ -132,6 +133,36 @@ def _history_share_image_input(
 
 def _history_share_image_branding(config: object) -> ShareImageBranding:
     return share_image_branding_from_config(config)
+
+
+_SHARE_IMAGE_LAYOUT_QUERY = Query(
+    SHARE_IMAGE_LAYOUT_CARD,
+    description=(
+        "分享图版式：card（默认，决策卡）或 full（完整报告长图）；"
+        "与推送图配置 MARKDOWN_TO_IMAGE_LAYOUT 相互独立，非法值返回 400"
+    ),
+)
+
+
+def _resolve_history_share_image_layout(layout: object) -> str:
+    """Validate the share-image ``layout`` query; unknown values are rejected with 400.
+
+    Missing values (including the un-resolved ``Query`` default when the handler is
+    called directly in tests) mean ``card`` so existing callers keep the decision card.
+    """
+
+    if not isinstance(layout, str) or not layout.strip():
+        return SHARE_IMAGE_LAYOUT_CARD
+    normalized = layout.strip().lower()
+    if normalized not in SHARE_IMAGE_LAYOUTS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_layout",
+                "message": f"layout 仅支持 {' / '.join(SHARE_IMAGE_LAYOUTS)}",
+            },
+        )
+    return normalized
 
 
 def _stock_bar_group_key(record_code: str, display_code: str) -> str:
@@ -844,6 +875,7 @@ def get_history_news(
     response_class=HTMLResponse,
     responses={
         200: {"description": "供桌面端内置 Chromium 渲染的分享图 HTML"},
+        400: {"description": "layout 参数非法", "model": ErrorResponse},
         404: {"description": "报告不存在", "model": ErrorResponse},
         413: {"description": "报告内容超过分享图长度上限", "model": ErrorResponse},
         500: {"description": "报告生成失败", "model": ErrorResponse},
@@ -853,8 +885,10 @@ def get_history_news(
 )
 def get_history_share_image_html(
     record_id: str,
+    layout: str = _SHARE_IMAGE_LAYOUT_QUERY,
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> HTMLResponse:
+    resolved_layout = _resolve_history_share_image_layout(layout)
     result, markdown_content = _history_share_image_input(record_id, db_manager)
     config = get_config()
     max_chars = getattr(config, "markdown_to_image_max_chars", 15000)
@@ -872,7 +906,7 @@ def get_history_share_image_html(
             markdown_content,
             structured_payload=_history_share_image_payload(result),
             branding=_history_share_image_branding(config),
-            layout=SHARE_IMAGE_LAYOUT_CARD,
+            layout=resolved_layout,
         )
     except Exception as exc:
         logger.error("Share image HTML generation failed for %s: %s", record_id, exc)
@@ -902,6 +936,7 @@ def get_history_share_image_html(
             "description": "分享图片：默认压缩为 JPEG；无法转 JPEG 时（如高度超过 JPEG 上限）返回原始 PNG",
             "content": {"image/jpeg": {}, "image/png": {}},
         },
+        400: {"description": "layout 参数非法", "model": ErrorResponse},
         404: {"description": "报告不存在", "model": ErrorResponse},
         500: {"description": "报告生成失败", "model": ErrorResponse},
         503: {"description": "图片渲染器不可用", "model": ErrorResponse},
@@ -909,13 +944,16 @@ def get_history_share_image_html(
     summary="生成历史报告分享图片",
     description=(
         "根据历史报告 Markdown 与持久化结构化数据生成确定性的分享图片；"
-        "默认返回 JPEG（quality 85），Content-Type 与文件扩展名跟随实际格式"
+        "默认返回 JPEG（quality 85），Content-Type 与文件扩展名跟随实际格式；"
+        "layout=card（默认）为决策卡，layout=full 为完整报告长图"
     ),
 )
 def get_history_share_image(
     record_id: str,
+    layout: str = _SHARE_IMAGE_LAYOUT_QUERY,
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> Response:
+    resolved_layout = _resolve_history_share_image_layout(layout)
     result, markdown_content = _history_share_image_input(record_id, db_manager)
 
     config = get_config()
@@ -923,8 +961,8 @@ def get_history_share_image(
         markdown_content,
         max_chars=getattr(config, "markdown_to_image_max_chars", 15000),
         structured_payload=_history_share_image_payload(result),
-        # Web 分享按钮固定使用决策卡版式，不受推送图 MARKDOWN_TO_IMAGE_LAYOUT 影响。
-        layout=SHARE_IMAGE_LAYOUT_CARD,
+        # Web 分享版式由请求参数决定，不受推送图 MARKDOWN_TO_IMAGE_LAYOUT 影响。
+        layout=resolved_layout,
     )
     if image_bytes is None:
         engine = getattr(config, "md2img_engine", "wkhtmltoimage")
@@ -950,7 +988,7 @@ def get_history_share_image(
         )
         content, media_type, extension = image_bytes, "image/png", "png"
 
-    filename = f"dsa-report-{result.get('id') or record_id}.{extension}"
+    filename = f"dsa-report-{result.get('id') or record_id}_{resolved_layout}.{extension}"
     return Response(
         content=content,
         media_type=media_type,

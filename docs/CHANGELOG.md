@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [chore] Default new MiniMax channels to MiniMax-M3.1-Flash and MiniMax-M3, filter older text recommendations while retaining saved/custom models, and refresh fallback pricing.
 
 - [修复] 推送图新增 `MARKDOWN_TO_IMAGE_LAYOUT`（`card` 默认 / `full`）：`full` 时单股、多股汇总与大盘复盘的推送图渲染完整报告全文（保留品牌页眉、风险提示与底部品牌信息），企业微信汇总图片同步改用完整报告并沿用压缩/切图；Web 分享按钮仍固定为决策卡。
+- [改进] Web“完整分析报告”抽屉中的“分享”改为默认生成完整报告长图（报告页“分享”仍默认决策卡）；分享预览弹窗新增“决策卡 / 完整报告”切换，已生成的版式在弹窗内缓存，下载 / 复制 / 系统分享使用当前版式，长图复制失败时提示改用下载。`GET /api/v1/history/{id}/share-image` 与 `/share-image-html` 新增查询参数 `layout=card|full`（默认 `card`，旧调用方不变；非法值返回 400），与推送图配置 `MARKDOWN_TO_IMAGE_LAYOUT` 相互独立；下载文件名改为区分版式（`dsa-report-<id>_card.jpg` / `_full.jpg`）；桌面端同步支持。
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [改进] 分享图与企业微信等推送图底部默认不再显示原项目 GitHub 仓库地址和原作者小红书二维码/昵称，并移除仓库内置二维码图片；如需展示自己的信息，在 `.env` 配置新增的 `SHARE_IMAGE_REPO_URL`（项目地址）及 `SHARE_IMAGE_XIAOHONGSHU_URL` / `_HANDLE` / `_QR_PATH`（只填部分时只显示已填内容，二维码文件缺失时记录 warning 并省略），风险提示保持不变，详见 `docs/share-images.md`。
