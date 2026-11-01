@@ -13,6 +13,7 @@ import requests
 from src.config import Config
 from src.formatters import strip_hidden_markdown_metadata
 from src.utils.sanitize import redact_log_text
+from src.utils.http_identity import NEUTRAL_USER_AGENT
 
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class NtfySender:
 
         headers = {
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "daily_stock_analysis",
+            "User-Agent": NEUTRAL_USER_AGENT,
         }
         token = (self._ntfy_token or "").strip()
         if token:

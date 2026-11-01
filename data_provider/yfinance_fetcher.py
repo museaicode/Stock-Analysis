@@ -36,6 +36,7 @@ from .realtime_types import UnifiedRealtimeQuote, RealtimeSource
 from .us_index_mapping import get_us_index_yf_symbol, is_us_stock_code
 from .yfinance_fundamental_adapter import _safe_float
 from src.services.market_symbol_utils import get_suffix_market, is_suffix_market_symbol
+from src.utils.http_identity import NEUTRAL_COMPATIBLE_USER_AGENT
 
 # 可选导入本地股票映射补丁，若缺失则使用空字典兜底
 try:
@@ -547,7 +548,7 @@ class YfinanceFetcher(BaseFetcher):
         request = Request(
             url,
             headers={
-                "User-Agent": "Mozilla/5.0 (compatible; DSA/1.0; +https://github.com/ZhuLinsen/daily_stock_analysis)",
+                "User-Agent": NEUTRAL_COMPATIBLE_USER_AGENT,
                 "Accept": "text/plain,text/csv,*/*",
             },
         )
@@ -568,7 +569,7 @@ class YfinanceFetcher(BaseFetcher):
             history_request = Request(
                 history_url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; DSA/1.0; +https://github.com/ZhuLinsen/daily_stock_analysis)",
+                    "User-Agent": NEUTRAL_COMPATIBLE_USER_AGENT,
                     "Accept": "text/plain,text/csv,*/*",
                 },
             )
