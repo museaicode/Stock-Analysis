@@ -77,4 +77,19 @@ describe('LoginPage', () => {
     expect(pageRoot).not.toBeNull();
     expect(pageRoot?.getAttribute('style') ?? '').not.toContain('--login-bg-main');
   });
+
+  it('shows the MIUSI brand on the login screen and in the document title', () => {
+    useAuthMock.mockReturnValue({
+      login: vi.fn(),
+      passwordSet: true,
+      setupState: 'enabled',
+    });
+
+    render(<LoginPage />);
+
+    expect(screen.getByText('MIUSI')).toBeInTheDocument();
+    expect(screen.queryByText(/DAILY/)).not.toBeInTheDocument();
+    expect(screen.getByText(/via MIUSI-V3-TLS/)).toBeInTheDocument();
+    expect(document.title).toBe('登录 - MIUSI');
+  });
 });
