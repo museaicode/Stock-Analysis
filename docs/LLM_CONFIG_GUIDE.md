@@ -520,6 +520,10 @@ VISION_PROVIDER_PRIORITY=gemini,anthropic,openai
 - `python scripts/check_env.py --config` ：纯检测 `.env` 配置文件里的逻辑写得对不对，是不是少写了什么。（秒出结果，不调用网络，纯检查本地文本拼写）
 - `python scripts/check_env.py --llm` ：系统会真的发一句问候语给大模型，让你亲眼看到他的回答。这能彻底测出你的**网络通不通、账号有没有欠费**。
 
+### LiteLLM 价格表与网络访问
+
+LiteLLM 默认会在 `import litellm` 时从 GitHub（`raw.githubusercontent.com/BerriAI/litellm`）下载最新模型价格表。本项目在 import litellm 之前自动设置 `LITELLM_LOCAL_MODEL_COST_MAP=True`（Docker 镜像与桌面端后端同样默认开启），改用 LiteLLM 安装包内置的价格表，启动时不再访问该地址；价格表只影响用量/成本估算，不影响模型调用。若你确实需要每次启动拉取最新价格表，可在环境变量或 `.env` 中显式设置 `LITELLM_LOCAL_MODEL_COST_MAP=False`，显式值始终优先。
+
 ### 常见踩坑答疑台
 
 | 遇到了什么诡异报错？ | 罪魁祸首可能是啥？ | 该怎么收拾它？ |

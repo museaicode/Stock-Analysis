@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.config import Config, get_config
 from src.repositories.intelligence_repo import IntelligenceRepository
+from src.utils.http_identity import NEUTRAL_USER_AGENT
 from src.storage import IntelligenceSource, INTELLIGENCE_ITEM_NULL_SCOPE_VALUE
 from src.services.run_diagnostics import sanitize_diagnostic_text
 
@@ -444,7 +445,7 @@ class IntelligenceService:
             return self._fetch_newsnow_entries(fields, limit=limit)
 
         timeout = max(1, min(float(self.config.news_intel_fetch_timeout_sec), 30.0))
-        headers = {"User-Agent": "daily-stock-analysis-intel/1.0"}
+        headers = {"User-Agent": NEUTRAL_USER_AGENT}
         self._validate_url(fields["url"])
         request_url = fields["url"]
         response = None
@@ -502,7 +503,7 @@ class IntelligenceService:
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 daily-stock-analysis-intel/1.0"
+                f"(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 {NEUTRAL_USER_AGENT}"
             ),
             "Accept": "application/json",
         }

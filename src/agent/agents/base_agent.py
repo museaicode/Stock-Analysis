@@ -282,6 +282,9 @@ class BaseAgent(ABC):
             tool_def = self.tool_registry.get(name)
             if tool_def:
                 filtered.register(tool_def)
+            elif name.startswith("fxmacrodata_"):
+                # FXMacroData tools are opt-in (FXMACRODATA_ENABLED); absence is expected.
+                logger.debug("[%s] optional tool '%s' not registered", self.agent_name, name)
             else:
                 logger.warning("[%s] requested tool '%s' not found in registry", self.agent_name, name)
         return filtered

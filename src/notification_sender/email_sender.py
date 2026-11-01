@@ -18,6 +18,7 @@ import smtplib
 from data_provider.base import normalize_stock_code
 from src.config import Config
 from src.formatters import markdown_to_html_document, strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -217,10 +218,10 @@ class EmailSender:
             logger.error("邮件发送失败：认证错误，请检查邮箱和授权码是否正确")
             return False
         except smtplib.SMTPConnectError as e:
-            logger.error(f"邮件发送失败：无法连接 SMTP 服务器 - {e}")
+            logger.error(f"邮件发送失败：无法连接 SMTP 服务器 - {redact_log_text(e)}")
             return False
         except Exception as e:
-            logger.error(f"发送邮件失败: {e}")
+            logger.error(f"发送邮件失败: {redact_log_text(e)}")
             return False
         finally:
             self._close_server(server)
@@ -276,7 +277,7 @@ class EmailSender:
             logger.info("邮件（内联图片）发送成功，收件人: %s", receivers)
             return True
         except Exception as e:
-            logger.error("邮件（内联图片）发送失败: %s", e)
+            logger.error("邮件（内联图片）发送失败: %s", redact_log_text(e))
             return False
         finally:
             self._close_server(server)

@@ -19,6 +19,7 @@ from src.formatters import (
     slice_at_max_bytes,
     strip_hidden_markdown_metadata,
 )
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ class CustomWebhookSender:
                     logger.error(f"自定义 Webhook {i+1} 推送失败")
                     
             except Exception as e:
-                logger.error(f"自定义 Webhook {i+1} 推送异常: {e}")
+                logger.error(f"自定义 Webhook {i+1} 推送异常: {redact_log_text(e)}")
         
         logger.info(f"自定义 Webhook 推送完成：成功 {success_count}/{len(self._custom_webhook_urls)}")
         return success_count > 0
@@ -147,7 +148,7 @@ class CustomWebhookSender:
                             "自定义 Webhook %d 不支持图片，且无回退内容，跳过", i + 1
                         )
             except Exception as e:
-                logger.error("自定义 Webhook %d 图片推送异常: %s", i + 1, e)
+                logger.error("自定义 Webhook %d 图片推送异常: %s", i + 1, redact_log_text(e))
         return success_count > 0
 
     def _post_custom_webhook(self, url: str, payload: dict, timeout: int = 30) -> bool:
@@ -163,7 +164,7 @@ class CustomWebhookSender:
         if response.status_code == 200:
             return True
         logger.error(f"自定义 Webhook 推送失败: HTTP {response.status_code}")
-        logger.debug(f"响应内容: {response.text[:200]}")
+        logger.debug(f"响应内容: {redact_log_text(response.text[:200])}")
         return False
 
     def test_custom_webhooks(self, content: str, *, timeout_seconds: float = 20.0) -> List[Dict[str, Any]]:

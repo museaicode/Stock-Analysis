@@ -17,6 +17,7 @@ from src.formatters import (
     chunk_content_by_max_words,
     strip_hidden_markdown_metadata,
 )
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ class DiscordSender:
                 )
             return chunks
         except ValueError as e:
-            logger.error("分割 Discord 消息失败: %s", e)
+            logger.error("分割 Discord 消息失败: %s", redact_log_text(e))
             return chunk_content_by_max_words(
                 content,
                 DISCORD_MAX_CONTENT_LENGTH,
@@ -238,7 +239,7 @@ class DiscordSender:
                     )
                     time.sleep(delay)
                     continue
-                logger.error("Discord %s 请求重试后仍失败: %s", channel_name, e)
+                logger.error("Discord %s 请求重试后仍失败: %s", channel_name, redact_log_text(e))
                 return False
 
             if response.status_code in success_statuses:

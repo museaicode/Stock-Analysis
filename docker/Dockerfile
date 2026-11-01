@@ -80,6 +80,8 @@ RUN EF_DATA_DIR="$(python -c 'import efinance, pathlib; print(pathlib.Path(efina
 
 # 设置环境变量默认值
 ENV PYTHONUNBUFFERED=1
+# Use LiteLLM's bundled model price table instead of fetching it from GitHub at import time.
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 ENV LOG_DIR=/app/logs
 ENV DATABASE_PATH=/app/data/stock_analysis.db
 # Web/API service

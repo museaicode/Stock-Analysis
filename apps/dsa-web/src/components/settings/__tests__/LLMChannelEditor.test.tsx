@@ -617,8 +617,8 @@ describe('LLMChannelEditor', () => {
     expect(screen.getByLabelText('Base URL')).toHaveValue('https://modelflare.dev/v1');
     expect(screen.getByLabelText('模型（逗号分隔）')).toHaveValue('gpt-6.1-sol');
     expect(screen.getByLabelText('API Key')).toHaveValue('');
-    expect(screen.getByRole('link', { name: 'Modelflare 专属注册' })).toHaveAttribute(
-      'href', 'https://modelflare.dev/sign-up?utm_source=daily_stock_analysis&utm_campaign=app',
+    expect(screen.getByRole('link', { name: 'Modelflare 官网' })).toHaveAttribute(
+      'href', 'https://modelflare.dev/',
     );
   });
 
@@ -688,7 +688,7 @@ describe('LLMChannelEditor', () => {
     const registrationLink = screen.getByRole('link', { name: '注册 Modelflare' });
     expect(registrationLink).toHaveAttribute(
       'href',
-      'https://modelflare.dev/sign-up?utm_source=daily_stock_analysis&utm_campaign=app',
+      'https://modelflare.dev/',
     );
     expect(registrationLink).toHaveAttribute('target', '_blank');
     expect(registrationLink).toHaveAttribute('rel', 'noopener noreferrer');

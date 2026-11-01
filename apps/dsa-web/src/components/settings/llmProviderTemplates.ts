@@ -20,8 +20,8 @@ export function filterDiscoveredTextModels(models: string[]): string[] {
   return filtered.map((model) => current(model) ? miniMaxModels[index++] : model);
 }
 
-export const MODELFLARE_APP_REGISTRATION_URL =
-  'https://modelflare.dev/sign-up?utm_source=daily_stock_analysis&utm_campaign=app';
+// Plain official homepages only: no aff / share_code / utm / ref parameters.
+export const MODELFLARE_APP_REGISTRATION_URL = 'https://modelflare.dev/';
 export const MODELFLARE_DEFAULT_MODEL = 'gpt-6.1-sol';
 
 export interface LLMProviderTemplate {
@@ -76,7 +76,7 @@ export const LLM_PROVIDER_TEMPLATES: LLMProviderTemplate[] = [
     configHint:
       'API Key 的路由分组需支持所选模型；模型 ID 请以控制台或获取模型的结果为准。modelflare 渠道的 Base URL 留空时使用默认 /v1 地址，可按需覆盖，不额外拼接 /chat/completions。',
     officialSources: [
-      { label: 'Modelflare 专属注册', url: MODELFLARE_APP_REGISTRATION_URL },
+      { label: 'Modelflare 官网', url: MODELFLARE_APP_REGISTRATION_URL },
       { label: 'Modelflare Docs', url: 'https://docs.modelflare.dev/' },
       { label: 'Modelflare Models & Pricing', url: 'https://modelflare.dev/pricing' },
     ],
@@ -88,7 +88,7 @@ export const LLM_PROVIDER_TEMPLATES: LLMProviderTemplate[] = [
     baseUrl: 'https://aihubmix.com/v1',
     placeholderModels: 'gpt-5.5,claude-sonnet-4-6,gemini-3.1-pro-preview',
     capabilities: ['openai-compatible', 'aggregator'],
-    officialSources: [{ label: 'AIHubmix', url: 'https://inferera.com/?aff=CfMq' }],
+    officialSources: [{ label: 'AIHubmix', url: 'https://aihubmix.com' }],
   },
   {
     channelId: 'anspire',
@@ -100,7 +100,7 @@ export const LLM_PROVIDER_TEMPLATES: LLMProviderTemplate[] = [
     configHint:
       '同一 ANSPIRE_API_KEYS 可复用到搜索与 LLM 渠道。以下模型与网关为配置示例，实际可用性请以账号权限和控制台为准；建议先点“测试连接”确认。',
     officialSources: [
-      { label: 'Anspire Open', url: 'https://open.anspire.cn/dsa?share_code=QFBC0FYC' },
+      { label: 'Anspire Open', url: 'https://open.anspire.cn/' },
       {
         label: 'LiteLLM OpenAI-compatible',
         url: 'https://docs.litellm.ai/docs/providers/openai_compatible',

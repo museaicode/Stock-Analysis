@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlparse
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
 
+from src.llm.litellm_env import apply_litellm_env_defaults
 from src.core.config_manager import unescape_compose_sensitive_env_value
 from src.report_language import (
     is_supported_report_language_value,
@@ -38,6 +39,7 @@ from src.notification_contracts import (
     is_feishu_static_configured,
 )
 from src.services.stock_list_parser import split_stock_list
+from src.services.stock_index_remote_service import DEFAULT_STOCK_INDEX_REMOTE_URL
 from src.llm.backend_registry import (
     AUTO_AGENT_BACKEND_ID,
     GENERATION_ONLY_BACKEND_IDS,
@@ -949,6 +951,9 @@ def setup_env(override: bool = False):
         key for key in compose_sensitive_keys if key in os.environ
     }
     load_dotenv(dotenv_path=env_path, override=override)
+    # Must happen before anything imports litellm: keep LiteLLM on its bundled
+    # price table instead of fetching it from GitHub (explicit values win).
+    apply_litellm_env_defaults()
     try:
         raw_env_values = dotenv_values(env_path, interpolate=False)
     except Exception as exc:  # pragma: no cover - defensive branch
@@ -1004,6 +1009,10 @@ class Config:
     longbridge_access_token: Optional[str] = None
     longbridge_oauth_client_id: Optional[str] = None
     stock_index_remote_update_enabled: bool = True
+    # Opt-in: FXMacroData macro tools are only registered for Agents when true.
+    fxmacrodata_enabled: bool = False
+    # Empty / invalid values disable remote refresh (see stock_index_remote_service).
+    stock_index_remote_url: str = DEFAULT_STOCK_INDEX_REMOTE_URL
 
     # === Built-in stock screening ===
     screening_enabled: bool = False
@@ -1961,6 +1970,8 @@ class Config:
                 os.getenv('STOCK_INDEX_REMOTE_UPDATE_ENABLED'),
                 default=True,
             ),
+            stock_index_remote_url=os.getenv('STOCK_INDEX_REMOTE_URL', DEFAULT_STOCK_INDEX_REMOTE_URL),
+            fxmacrodata_enabled=parse_env_bool(os.getenv('FXMACRODATA_ENABLED'), default=False),
             generation_backend=generation_backend,
             generation_fallback_backend=generation_fallback_backend,
             generation_backend_timeout_seconds=generation_backend_timeout_seconds,

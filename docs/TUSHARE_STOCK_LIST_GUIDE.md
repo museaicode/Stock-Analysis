@@ -131,21 +131,26 @@ python3 scripts/generate_index_from_csv.py         # 确认后生成
 
 ### 本地客户端自动获取最新索引
 
-新版客户端默认会从项目 GitHub `main` 分支读取最新的 `apps/dsa-web/public/stocks.index.json`，并缓存到本地 `data/cache/stocks.index.json`。前端仍访问本地 `/stocks.index.json`，不需要直接跨域请求 GitHub。
+新版客户端默认会从本仓库（`museaicode/Stock-Analysis`）GitHub `main` 分支读取最新的 `apps/dsa-web/public/stocks.index.json`，并缓存到本地 `data/cache/stocks.index.json`。前端仍访问本地 `/stocks.index.json`，不需要直接跨域请求 GitHub。
 
-远程索引地址、检查频率和网络超时时间为系统内置值，不提供用户配置项；用户只需要决定是否启用：
+检查频率和网络超时时间为系统内置值；是否启用与远程地址可配置：
 
 ```bash
 STOCK_INDEX_REMOTE_UPDATE_ENABLED=true
+# 可选，默认值如下；可改为自建镜像地址
+STOCK_INDEX_REMOTE_URL=https://raw.githubusercontent.com/museaicode/Stock-Analysis/main/apps/dsa-web/public/stocks.index.json
 ```
 
-默认开启时，系统最多每 48 小时检查一次更新。若运行环境无法访问 GitHub raw、请求超时、返回内容不是合法股票索引，应用会保留已有缓存；如果没有远程缓存，则继续使用随应用打包的内置索引。远程更新失败不会阻断 WebUI 启动、股票自动补全或分析流程；连续失败达到系统内置阈值后，会在本进程内暂停重试直到下一轮 48 小时窗口。
+- `STOCK_INDEX_REMOTE_URL` 未设置时使用上面的默认地址；设为空字符串或非 `http(s)` 的非法地址时，启动时记录一条 warning 并跳过远程更新，不影响启动和补全。
+- 默认开启时，系统最多每 48 小时检查一次更新。若运行环境无法访问 GitHub raw、请求超时、返回内容不是合法股票索引，应用会保留已有缓存；如果没有远程缓存，则继续使用随应用打包的内置索引。远程更新失败不会阻断 WebUI 启动、股票自动补全或分析流程。
+- 每轮失败只记录一条 warning（后续重试降为 debug），连续失败 3 次后会在本进程内暂停重试直到下一轮 48 小时窗口，不会因前端反复请求 `/stocks.index.json` 刷屏。
+- **私有仓库说明**：若本仓库设为私有，`raw.githubusercontent.com` 无法匿名访问（返回 404），远程更新会按上面的规则失败并回退到本地内置索引。此时可将 `STOCK_INDEX_REMOTE_URL` 指向可公开访问的镜像，或设置 `STOCK_INDEX_REMOTE_UPDATE_ENABLED=false` 完全不访问网络。
 
 ## 注意事项
 
 1. **积分要求**：确保账号积分足够（A股/港股2000，美股120试用）
 2. **请求限制**：注意 API 的每分钟请求次数限制
-3. **数据更新**：维护者建议每三天刷新一次并提交到仓库；本地客户端默认最多每 48 小时检查一次 GitHub `main` 上的索引更新。后续可通过 GitHub Actions workflow 自动化刷新与提交 PR
+3. **数据更新**：维护者建议每三天刷新一次并提交到仓库；本地客户端默认最多每 48 小时检查一次本仓库 GitHub `main` 上的索引更新（地址见 `STOCK_INDEX_REMOTE_URL`）。后续可通过 GitHub Actions workflow 自动化刷新与提交 PR
 4. **网络连接**：需要稳定的网络连接
 
 ## 常见问题

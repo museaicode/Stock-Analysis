@@ -139,6 +139,17 @@ Discord 长报告发送复用现有分片链路：单条 `content` 运行时不�
 
 日志会记录原始大小，以及最终是单张 JPEG（大小与 quality）、切成 N 张（每张大小）还是回退为文字。处理时只在该函数内临时放宽 Pillow 的 `MAX_IMAGE_PIXELS`，不修改全局设置。
 
+## 日志脱敏
+
+所有日志输出（控制台、`logs/*.log`、调试日志）都会经过全局脱敏 Filter（`src/logging_config.py` 的 `SensitiveDataFilter`，复用 `src/utils/sanitize.py`），对日志消息和异常堆栈中的以下内容做掩码：
+
+- Telegram `/bot<token>/` 路径及裸 bot token；
+- URL 查询参数中的 `key` / `token` / `access_token` / `sendkey` / `secret` / `sign` 等（企业微信 `key=`、钉钉 `access_token`、PushPlus / Gotify `token=` 等）；
+- 飞书 / Lark hook、企业微信、钉钉、Slack、Discord、Server酱等 Webhook 地址只保留协议和域名；
+- `Authorization` / `Bearer` / Cookie 头、`token=...` 形式的赋值和常见 API Key 形态。
+
+各通知渠道在记录发送异常和响应内容前也会先调用 `redact_log_text` 脱敏，即使日志未经过上述 Filter（如测试或第三方 handler）也不会输出完整凭据。
+
 ## CLI 诊断
 
 ```bash

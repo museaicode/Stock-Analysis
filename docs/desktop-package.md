@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
   - 在 Actions 页面手动触发并指定 `release_tag`
 - 产物：
   - Windows 安装包：Release 附件和本地 `apps/dsa-desktop/dist/` 中统一为 `daily-stock-analysis-windows-installer-<tag>.exe`
-  - Windows 自动更新元数据：Release 附件会额外保留 `latest.yml` 和 `*.blockmap`，供安装版桌面端后台下载与校验更新；普通用户无需手动下载这些元数据。下载完成后用户确认“重启安装”时，桌面端会先停止内置后端、备份运行时文件，并以静默模式执行安装器。
+  - Windows 自动更新元数据：Release 附件会额外保留 `latest.yml` 和 `*.blockmap`，供安装版桌面端在用户确认后下载与校验更新；普通用户无需手动下载这些元数据。下载完成后用户确认“重启安装”时，桌面端会先停止内置后端、备份运行时文件，并以静默模式执行安装器。
   - Windows 免安装包：`daily-stock-analysis-windows-noinstall-<tag>.zip`
   - macOS Intel：`daily-stock-analysis-macos-x64-<tag>.dmg`
   - macOS Apple Silicon：`daily-stock-analysis-macos-arm64-<tag>.dmg`
@@ -85,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
 
 请按以下顺序排查：
 
-1. 只从项目的 [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) 下载附件，并确认安装包架构与 Mac 一致：Apple 芯片（M1/M2/M3/M4 等）使用 `daily-stock-analysis-macos-arm64-<tag>.dmg`，Intel 芯片使用 `daily-stock-analysis-macos-x64-<tag>.dmg`。不要对第三方转载或来源不明的安装包绕过 Gatekeeper。
+1. 只从项目的 [GitHub Releases](https://github.com/museaicode/Stock-Analysis/releases) 下载附件，并确认安装包架构与 Mac 一致：Apple 芯片（M1/M2/M3/M4 等）使用 `daily-stock-analysis-macos-arm64-<tag>.dmg`，Intel 芯片使用 `daily-stock-analysis-macos-x64-<tag>.dmg`。不要对第三方转载或来源不明的安装包绕过 Gatekeeper。
 2. 打开 DMG，将 `Daily Stock Analysis` 拖入“应用程序”后尝试启动一次。若被拦截，进入“系统设置 -> 隐私与安全性”，在安全性提示处确认应用名称，然后点击“仍要打开”，按系统提示再次确认。较旧 macOS 的对应入口为“系统偏好设置 -> 安全性与隐私 -> 通用”。
 3. 仅当安装包确认来自上述官方 Release、且“仍要打开”仍无法放行时，打开“终端”清除该应用的下载隔离属性，然后重新启动：
 
@@ -156,7 +156,7 @@ ls -1 dist/*.yml dist/*.blockmap 2>/dev/null || true
 
 ```bash
 RELEASE_TAG="v$(node -p \"require('./package.json').version\")"
-REPO="ZhuLinsen/daily_stock_analysis"
+REPO="museaicode/Stock-Analysis"
 
 for f in dist/*latest.yml dist/*.blockmap dist/daily-stock-analysis-windows-installer-*.exe; do
   [ -f \"$f\" ] && echo \"[FOUND] $f\"
@@ -309,8 +309,11 @@ win-unpacked/
 
 ### 桌面端更新提醒
 
+- 更新源固定为本仓库 [museaicode/Stock-Analysis](https://github.com/museaicode/Stock-Analysis/releases)（`main.js` 中的 `GITHUB_OWNER` / `GITHUB_REPO` 与 `package.json` 中 `build.win.publish` 的 `owner` / `repo`，两处需保持一致）
 - 应用在主界面加载完成后会后台检查 GitHub Releases 的最新正式版，并与当前 `app.getVersion()` 做语义化版本比较
-- Windows NSIS 安装版会通过内置 GitHub 更新源自动下载新版本；下载完成后弹出一次性提醒，用户确认后静默重启并安装
+- Windows NSIS 安装版检测到新版本后**不会自动下载**：先弹窗提示，用户点击“下载更新”后才开始下载；选择“稍后”时不下载，之后可在右上角入口或设置页手动检查再次触发提示，或直接打开 Release 页手动下载。下载完成后再弹出一次性提醒，用户确认后静默重启并安装
+- 设置 `DSA_DESKTOP_UPDATE_CHECK=false`（进程环境变量或桌面端 `.env` 均可，进程环境变量优先；默认 `true`）可完全关闭更新检查：启动时不再请求 GitHub，手动检查也会直接返回“更新检查已关闭”，不会发起任何网络请求
+- **发版要求**：更新检查只读取本仓库的 Release。之后发布新版本时，必须通过本仓库的 `desktop-release` 工作流发布带 `latest.yml`（及 `*.blockmap`、Windows 安装包）的 GitHub Release；若本仓库没有这样的 Release，安装版的更新检查会找不到新版本（表现为“已是最新”或检查失败），不会再回退到上游项目的 Release。另外，私有仓库的 Release 无法匿名访问，此时更新检查会失败，可设置 `DSA_DESKTOP_UPDATE_CHECK=false` 关闭
 - 自动更新静默安装会复用当前安装目录；如果用户安装时选择了非默认目录或带空格目录，后续自动更新仍会覆盖同一目录
 - 桌面运行时会在全局右上角显示更新入口，可查看状态、手动检查、打开 Release 页或在更新已下载后执行“重启安装”；普通浏览器 WebUI 不显示该入口
 - `系统设置 -> 版本信息` 中的“桌面端更新”区域仍可作为详细入口和兜底；全局入口与设置页共用同一套更新状态，检查中、下载中或安装中时两侧入口都会禁用，不会重复发起手动检查

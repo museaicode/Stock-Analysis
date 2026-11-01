@@ -1,6 +1,6 @@
 # FXMacroData for Daily Stock Analysis
 
-The stock report and chat agent can call native macroeconomic tools. Each tool retains the complete public input schema, original payload, release timestamps and source provenance. The factory adds these tools to the same registry as the existing market tools.
+The stock report and chat agent can call native macroeconomic tools. **They are off by default**: set `FXMACRODATA_ENABLED=true` (default `false`) in `.env` to register the `fxmacrodata_*` tools and allow requests to `fxmacrodata.com`; when disabled, specialist agents skip these tools silently. The tools' `provider_url` is the plain `https://fxmacrodata.com/` without utm parameters. Each tool retains the complete public input schema, original payload, release timestamps and source provenance. The factory adds these tools to the same registry as the existing market tools.
 
 The core integration uses [FXMacroData](https://fxmacrodata.com/?utm_source=github&utm_medium=referral&utm_campaign=open_source_integrations&utm_content=daily_stock_analysis_readme) always-free public USD endpoints and requires no API key, account or credit card. Public indicator history currently covers the most recent 90 days; catalogue and release-calendar access also work without a key. Optional authenticated coverage follows the API contract.
 
@@ -117,4 +117,4 @@ These focused tests do not replace the target project's full CI gate. No live cr
 
 ## Attribution
 
-Rob Tidball owns FXMacroData and maintains this adapter. Website links identify the provider; campaign parameters distinguish repository documentation visits from integration application visits. API/MCP requests have no campaign parameters, and the adapter sends no click telemetry.
+Rob Tidball owns FXMacroData and maintains this adapter. Website links identify the provider; campaign parameters distinguish repository documentation visits from integration application visits. API/MCP requests have no campaign parameters, the `provider_url` returned to the model has none either, and the adapter sends no click telemetry.

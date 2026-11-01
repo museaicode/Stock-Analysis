@@ -313,7 +313,8 @@ jobs:
           LONGBRIDGE_ENABLE_OVERNIGHT: ${{ vars.LONGBRIDGE_ENABLE_OVERNIGHT || secrets.LONGBRIDGE_ENABLE_OVERNIGHT }}
           LONGBRIDGE_PUSH_CANDLESTICK_MODE: ${{ vars.LONGBRIDGE_PUSH_CANDLESTICK_MODE || secrets.LONGBRIDGE_PUSH_CANDLESTICK_MODE }}
           LONGBRIDGE_PRINT_QUOTE_PACKAGES: ${{ vars.LONGBRIDGE_PRINT_QUOTE_PACKAGES || secrets.LONGBRIDGE_PRINT_QUOTE_PACKAGES }}
-          # FXMacroData（Agent 宏观数据工具的可选授权；不设则仅使用公开 USD 数据）
+          # FXMacroData（Agent 宏观数据工具，默认关闭；设 FXMACRODATA_ENABLED=true 才注册工具；Key 为可选授权）
+          FXMACRODATA_ENABLED: ${{ vars.FXMACRODATA_ENABLED || secrets.FXMACRODATA_ENABLED }}
           FXMACRODATA_API_KEY: ${{ secrets.FXMACRODATA_API_KEY }}
           
           # ==========================================
@@ -504,7 +505,7 @@ jobs:
           echo "【数据源】"
           echo "  Tushare Token: $([ -n "$TUSHARE_TOKEN" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  TickFlow:      $([ -n "$TICKFLOW_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
-          echo "  FXMacroData:   $([ -n "$FXMACRODATA_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置（仅公开 USD 数据）')"
+          echo "  FXMacroData:   $([ "$FXMACRODATA_ENABLED" = "true" ] && { [ -n "$FXMACRODATA_API_KEY" ] && echo '✅ 已启用（已配置 Key）' || echo '✅ 已启用（仅公开 USD 数据）'; } || echo '⚪ 未启用（FXMACRODATA_ENABLED=false）')"
           if [ -n "$LONGBRIDGE_APP_KEY" ] && [ -n "$LONGBRIDGE_APP_SECRET" ] && [ -n "$LONGBRIDGE_ACCESS_TOKEN" ]; then
             echo "  Longbridge: ✅ 已配置（Legacy API Key）"
           elif [ -n "$LONGBRIDGE_OAUTH_CLIENT_ID" ] || { [ -n "$LONGBRIDGE_APP_KEY" ] && [ -z "$LONGBRIDGE_ACCESS_TOKEN" ]; }; then
@@ -562,6 +563,9 @@ jobs:
             python main.py $FORCE_RUN_ARG
           fi
       
+      # ⚠️ 隐私提醒：公开仓库的 Actions artifact 任何人（包括未登录用户）都可以下载。
+      # 因此这里只上传 reports/，不上传 logs/（日志可能含持仓、代理地址、请求明细等运行细节），
+      # 且保留期缩短为 3 天。如需排查日志，请直接查看本次运行的 Actions 日志输出。
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
         if: always()
@@ -569,8 +573,7 @@ jobs:
           name: analysis-reports-${{ github.run_number }}
           path: |
             reports/
-            logs/
-          retention-days: 30
+          retention-days: 3
       
       - name: 显示运行结果
         if: always()

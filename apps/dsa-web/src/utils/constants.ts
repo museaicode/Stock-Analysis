@@ -13,6 +13,10 @@ const UNKNOWN_BUILD_TIME = '未提供';
 // 仅在显式提供 VITE_API_URL 时才覆盖默认行为。
 export const API_BASE_URL = configuredApiBaseUrl || '';
 
+// Base URL for settings-page help links to repository docs.
+// Keep in sync with DOCS_BASE_URL in src/core/config_registry.py.
+export const DOCS_BASE_URL = 'https://github.com/museaicode/Stock-Analysis/blob/main/docs/';
+
 export type WebBuildInfo = {
   version: string;
   rawVersion: string;

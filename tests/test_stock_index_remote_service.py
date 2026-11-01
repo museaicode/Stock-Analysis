@@ -210,18 +210,87 @@ def test_missing_remote_stock_index_cache_is_silent(tmp_path: Path, caplog: pyte
     assert not any("cached remote index is invalid" in record.getMessage() for record in caplog.records)
 
 
-def test_settings_from_config_uses_internal_remote_url_only() -> None:
+def test_default_remote_url_points_to_this_repository() -> None:
+    assert service.DEFAULT_STOCK_INDEX_REMOTE_URL == (
+        "https://raw.githubusercontent.com/museaicode/Stock-Analysis/main/apps/dsa-web/public/stocks.index.json"
+    )
+    assert "ZhuLinsen" not in service.DEFAULT_STOCK_INDEX_REMOTE_URL
+
+
+def test_settings_from_config_defaults_to_builtin_url() -> None:
+    settings = service.settings_from_config(SimpleNamespace(stock_index_remote_update_enabled=True))
+
+    assert settings.enabled is True
+    assert settings.url == service.DEFAULT_STOCK_INDEX_REMOTE_URL
+    assert settings.ttl_hours == service.DEFAULT_STOCK_INDEX_REMOTE_TTL_HOURS
+    assert settings.timeout_seconds == service.DEFAULT_STOCK_INDEX_REMOTE_TIMEOUT_SECONDS
+
+
+def test_settings_from_config_uses_configured_remote_url() -> None:
     config = SimpleNamespace(
-        stock_index_remote_update_enabled=False,
-        stock_index_remote_url="https://example.invalid/override.json",
+        stock_index_remote_update_enabled=True,
+        stock_index_remote_url="  https://mirror.example.com/stocks.index.json  ",
     )
 
     settings = service.settings_from_config(config)
 
-    assert settings.enabled is False
-    assert settings.url == service.DEFAULT_STOCK_INDEX_REMOTE_URL
-    assert settings.ttl_hours == service.DEFAULT_STOCK_INDEX_REMOTE_TTL_HOURS
-    assert settings.timeout_seconds == service.DEFAULT_STOCK_INDEX_REMOTE_TIMEOUT_SECONDS
+    assert settings.enabled is True
+    assert settings.url == "https://mirror.example.com/stocks.index.json"
+
+
+def test_settings_from_config_keeps_disabled_flag_with_custom_url() -> None:
+    config = SimpleNamespace(
+        stock_index_remote_update_enabled=False,
+        stock_index_remote_url="https://mirror.example.com/stocks.index.json",
+    )
+
+    assert service.settings_from_config(config).enabled is False
+
+
+@pytest.mark.parametrize("raw_url", ["", "   ", "not a url", "ftp://example.com/x.json", "https://", None])
+def test_settings_from_config_skips_empty_or_invalid_url_with_single_warning(
+    raw_url: object,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = SimpleNamespace(stock_index_remote_update_enabled=True, stock_index_remote_url=raw_url)
+
+    with caplog.at_level(logging.WARNING, logger="src.services.stock_index_remote_service"), \
+         patch.object(service.requests, "get") as get:
+        for _ in range(5):
+            settings = service.settings_from_config(config)
+            settings = service.RemoteStockIndexSettings(
+                enabled=settings.enabled,
+                url=settings.url,
+                cache_path=tmp_path / "stocks.index.json",
+            )
+            result = service.refresh_remote_stock_index_cache(settings)
+            assert result.skipped is True
+
+    get.assert_not_called()
+    warnings = [r for r in caplog.records if "STOCK_INDEX_REMOTE_URL" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_repeated_download_failures_log_a_single_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Private repo -> raw.githubusercontent.com 404: one warning, no flood."""
+    cache_path = tmp_path / "stocks.index.json"
+    settings = service.RemoteStockIndexSettings(cache_path=cache_path, ttl_hours=48)
+    response = Mock()
+    response.raise_for_status.side_effect = service.requests.HTTPError("404 Client Error: Not Found")
+
+    with caplog.at_level(logging.WARNING, logger="src.services.stock_index_remote_service"), \
+         patch.object(service.requests, "get", return_value=response) as get:
+        results = [service.refresh_remote_stock_index_cache(settings) for _ in range(20)]
+
+    assert get.call_count == service.DEFAULT_STOCK_INDEX_REMOTE_MAX_FAILURES
+    assert all(result.cache_path is None for result in results)
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "remote update failed" in warnings[0].getMessage()
 
 
 @pytest.mark.parametrize(

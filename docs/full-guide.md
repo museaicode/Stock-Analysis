@@ -1902,6 +1902,12 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 - `search_stock_news` 与 `search_comprehensive_intel` 成功返回后会 best-effort 写入 `news_intel`，复用现有 URL / fallback key 去重逻辑。
 - `get_realtime_quote` 不复用 `stock_daily` 作为实时行情缓存，也不会把盘中实时行情写入日线表；如需实时行情缓存，应单独设计实时行情存储。
 
+## FXMacroData 宏观数据工具（默认关闭）
+
+- Agent 的 FXMacroData 宏观数据工具（`fxmacrodata_*`）会向第三方服务 `fxmacrodata.com` 发起请求，默认**不注册**。
+- 需要时在 `.env` 设置 `FXMACRODATA_ENABLED=true` 后重启（或保存配置触发重载）；可选的 `FXMACRODATA_API_KEY` 仅在启用后才会被读取。
+- 关闭时情报 / 风险 / 组合等专业 Agent 的允许列表中的 FXMacroData 工具会被静默跳过，不影响其他工具与分析流程；工具返回的 `provider_url` 为不带 utm 参数的 `https://fxmacrodata.com/`。详见 [FXMACRODATA.md](FXMACRODATA.md)。
+
 ## Agent 事件告警监控
 
 `AGENT_EVENT_MONITOR_ENABLED=true` 后，schedule 模式会按 `AGENT_EVENT_MONITOR_INTERVAL_MINUTES` 运行告警 worker。worker 每轮读取 Alert API 创建并启用的持久化规则，同时继续兼容 `AGENT_EVENT_ALERT_RULES_JSON` 中的 legacy 规则；触发后仍发送到现有通知渠道。Alert API / Web 持久化规则支持实时价、涨跌幅、成交量、日线技术指标、`watchlist`、`portfolio_holdings`、`portfolio_account`，以及 `market` 大盘红绿灯目标；legacy JSON 仍仅支持三类基础规则。

@@ -12,6 +12,8 @@ import requests
 
 from src.config import Config
 from src.formatters import strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
+from src.utils.http_identity import NEUTRAL_USER_AGENT
 
 
 logger = logging.getLogger(__name__)
@@ -82,7 +84,7 @@ class GotifySender:
 
         headers = {
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "daily_stock_analysis",
+            "User-Agent": NEUTRAL_USER_AGENT,
             "X-Gotify-Key": str(self._gotify_token).strip(),
         }
         payload = {
@@ -108,7 +110,7 @@ class GotifySender:
                 return True
 
             logger.error("Gotify 请求失败: HTTP %s", response.status_code)
-            logger.debug("Gotify 响应内容: %s", response.text)
+            logger.debug("Gotify 响应内容: %s", redact_log_text(response.text))
             return False
         except requests.exceptions.Timeout:
             logger.error("发送 Gotify 消息失败: 请求超时")

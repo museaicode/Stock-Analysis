@@ -195,12 +195,13 @@ class TestLLMUsageHMACFieldsRegistered(unittest.TestCase):
 
 
 class TestAIHubMixReferralMetadata(unittest.TestCase):
-    def test_uses_mainland_accessible_referral_without_changing_api_base_hint(self):
+    def test_uses_plain_official_url_without_changing_api_base_hint(self):
         description = get_field_definition("AIHUBMIX_KEY")["description"]
 
-        self.assertIn("Get key: https://inferera.com/?aff=CfMq", description)
+        self.assertIn("Get key: https://aihubmix.com", description)
         self.assertIn("Auto-sets base URL to aihubmix.com/v1", description)
-        self.assertNotIn("Get key: https://aihubmix.com/", description)
+        self.assertNotIn("aff=", description)
+        self.assertNotIn("inferera.com", description)
 
 
 class TestGenerationBackendFieldsRegistered(unittest.TestCase):

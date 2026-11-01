@@ -13,6 +13,7 @@ import requests
 
 from src.config import Config
 from src.formatters import chunk_content_by_max_bytes, strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class PushplusSender:
                 timeout_seconds=timeout_seconds,
             )
         except Exception as e:
-            logger.error(f"发送 PushPlus 消息失败: {e}")
+            logger.error(f"发送 PushPlus 消息失败: {redact_log_text(e)}")
             return False
 
     def _send_pushplus_message(

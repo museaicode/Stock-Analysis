@@ -143,6 +143,14 @@ def _fallback_login(author: str) -> str | None:
     return None
 
 
+DEFAULT_REPOSITORY = "museaicode/Stock-Analysis"
+
+
+def _repository() -> str:
+    """Repository for links: the Actions repository, falling back to this repo."""
+    return os.environ.get("GITHUB_REPOSITORY", "").strip() or DEFAULT_REPOSITORY
+
+
 def _contributors(previous_tag: str, tag: str) -> list[str]:
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     token = os.environ.get("GITHUB_TOKEN", "")
@@ -189,7 +197,7 @@ def build(tag: str) -> str:
         [
             "",
             "### Full changelog",
-            f"https://github.com/ZhuLinsen/daily_stock_analysis/compare/{compare_from}...{tag}",
+            f"https://github.com/{_repository()}/compare/{compare_from}...{tag}",
             "",
         ]
     )

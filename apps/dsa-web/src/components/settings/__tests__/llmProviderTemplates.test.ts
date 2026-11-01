@@ -3,6 +3,7 @@ import {
   LLM_PROVIDER_CAPABILITY_LABELS,
   LLM_PROVIDER_TEMPLATE_BY_ID,
   LLM_PROVIDER_TEMPLATES,
+  MODELFLARE_APP_REGISTRATION_URL,
   MODEL_PLACEHOLDERS_BY_PROTOCOL,
   filterDiscoveredTextModels,
   getProviderTemplate,
@@ -53,7 +54,7 @@ describe('llmProviderTemplates', () => {
       placeholderModels: 'gpt-6.1-sol',
       capabilities: ['openai-compatible', 'aggregator', 'model-discovery'],
       officialSources: [
-        { label: 'Modelflare 专属注册', url: 'https://modelflare.dev/sign-up?utm_source=daily_stock_analysis&utm_campaign=app' },
+        { label: 'Modelflare 官网', url: 'https://modelflare.dev/' },
         { label: 'Modelflare Docs', url: 'https://docs.modelflare.dev/' },
         { label: 'Modelflare Models & Pricing', url: 'https://modelflare.dev/pricing' },
       ],
@@ -130,7 +131,7 @@ describe('llmProviderTemplates', () => {
   it('uses the mainland-accessible AIHubmix referral without changing its API base URL', () => {
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.aihubmix).toMatchObject({
       baseUrl: 'https://aihubmix.com/v1',
-      officialSources: [{ label: 'AIHubmix', url: 'https://inferera.com/?aff=CfMq' }],
+      officialSources: [{ label: 'AIHubmix', url: 'https://aihubmix.com' }],
     });
   });
 
@@ -139,6 +140,24 @@ describe('llmProviderTemplates', () => {
       expect(template.capabilities.length).toBeGreaterThan(0);
       expect(template.officialSources.length).toBeGreaterThan(0);
     }
+  });
+
+  it('links only to plain official pages without referral or tracking parameters', () => {
+    const tracking = /[?&](aff|share_code|ref|utm_[a-z]+)=/i;
+    const urls = [
+      MODELFLARE_APP_REGISTRATION_URL,
+      ...LLM_PROVIDER_TEMPLATES.flatMap((template) => template.officialSources.map((source) => source.url)),
+    ];
+    for (const url of urls) {
+      expect(url).not.toMatch(tracking);
+    }
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.aihubmix?.officialSources).toEqual([
+      { label: 'AIHubmix', url: 'https://aihubmix.com' },
+    ]);
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.anspire?.officialSources[0]).toEqual({
+      label: 'Anspire Open',
+      url: 'https://open.anspire.cn/',
+    });
   });
 
   it('keeps protocol-level fallback placeholders centralized', () => {

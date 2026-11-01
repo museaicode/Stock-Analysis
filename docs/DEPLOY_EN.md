@@ -432,7 +432,8 @@ git push
 
 - Actions page shows run history
 - Click specific run record to view detailed logs
-- Analysis reports are saved as Artifacts for 30 days
+- Analysis reports (`reports/`) are saved as Artifacts for 3 days; `logs/` is no longer uploaded as an Artifact, read the run log instead
+- ⚠️ Artifacts of a public repository can be downloaded by anyone; keep anything you do not want public out of the reports
 
 ### Schedule Details
 

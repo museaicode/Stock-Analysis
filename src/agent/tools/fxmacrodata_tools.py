@@ -9,6 +9,9 @@ from src.agent.tools.registry import ToolDefinition, ToolParameter, ToolPolicy
 
 logger = logging.getLogger(__name__)
 
+# Plain provider homepage (no tracking/referral parameters).
+FXMACRODATA_PROVIDER_URL = "https://fxmacrodata.com/"
+
 
 class FXMacroDataTool(ToolDefinition):
     """Keep nested public JSON Schemas intact in every DSA tool descriptor."""
@@ -61,10 +64,7 @@ def build_fxmacrodata_tools(client: FXMacroDataClient | None = None) -> list[FXM
                 if provider is None:
                     provider = FXMacroDataClient(api_key=os.environ.get("FXMACRODATA_API_KEY") or "", timeout=30)
                 response = provider.execute(operation_name, arguments).as_dict()
-                response["provider_url"] = (
-                    "https://fxmacrodata.com/?utm_source=daily_stock_analysis"
-                    "&utm_medium=integration&utm_campaign=open_source_integrations&utm_content=app"
-                )
+                response["provider_url"] = FXMACRODATA_PROVIDER_URL
                 return response
             except Exception:
                 # DSA logs propagated exceptions; never propagate a client

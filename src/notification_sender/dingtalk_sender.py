@@ -10,6 +10,8 @@ from typing import Optional
 
 from src.config import Config
 from src.formatters import chunk_content_by_max_bytes, strip_hidden_markdown_metadata  # <-- 引入项目内置的切片器
+from src.utils.sanitize import redact_log_text
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +79,7 @@ class DingtalkSender:
                     logger.error(f"钉钉消息分段 {index + 1} 发送失败 (DingTalk API error): {result}")
                     all_success = False
             except Exception as e:
-                logger.error(f"发送钉钉消息异常 (Failed to send DingTalk notification chunk {index + 1}): {e}")
+                logger.error(f"发送钉钉消息异常 (Failed to send DingTalk notification chunk {index + 1}): {redact_log_text(e)}")
                 all_success = False
             
             if len(chunks) > 1 and index < len(chunks) - 1:
