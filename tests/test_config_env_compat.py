@@ -23,6 +23,7 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
+                "SHARE_IMAGE_REPO_URL": " https://github.com/example/my-fork ",
                 "SHARE_IMAGE_XIAOHONGSHU_URL": "https://example.com/xhs",
                 "SHARE_IMAGE_XIAOHONGSHU_HANDLE": "@自定义账号",
                 "SHARE_IMAGE_XIAOHONGSHU_ID": "123456",
@@ -32,6 +33,7 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         ):
             configured = Config._load_from_env()
 
+        self.assertEqual(configured.share_image_repo_url, "https://github.com/example/my-fork")
         self.assertEqual(configured.share_image_xiaohongshu_url, "https://example.com/xhs")
         self.assertEqual(configured.share_image_xiaohongshu_handle, "@自定义账号")
         self.assertEqual(configured.share_image_xiaohongshu_id, "123456")
@@ -40,6 +42,7 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             disabled = Config._load_from_env()
 
+        self.assertIsNone(disabled.share_image_repo_url)
         self.assertIsNone(disabled.share_image_xiaohongshu_url)
         self.assertIsNone(disabled.share_image_xiaohongshu_handle)
         self.assertIsNone(disabled.share_image_xiaohongshu_id)
