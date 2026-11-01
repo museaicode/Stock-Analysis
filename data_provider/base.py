@@ -636,7 +636,7 @@ class DataFetcherManager:
         "TencentFetcher": {"cn"},
         "AkshareFetcher": {"cn", "hk"},
         "TushareFetcher": {"cn", "hk"},
-        "TickFlowFetcher": {"cn"},
+        "TickFlowFetcher": {"cn", "us"},
         # 妙想为垂直补充数据源（资金流/筹码分布），不提供日线行情
         "MiaoxiangFetcher": set(),
         "PytdxFetcher": {"cn"},
@@ -648,6 +648,21 @@ class DataFetcherManager:
         "AlphaVantageFetcher": {"us"},
     }
     _daily_source_health = CircuitBreaker(failure_threshold=3, cooldown_seconds=300.0)
+    # 美股个股日 K 内置链路：TickFlow 紧跟 Finnhub 兜底（见 _order_us_sources_by_priority）
+    _US_DAILY_SOURCE_ORDER = (
+        "FinnhubFetcher",
+        "TickFlowFetcher",
+        "AlphaVantageFetcher",
+        "YfinanceFetcher",
+        "LongbridgeFetcher",
+    )
+    _US_DAILY_SOURCE_ORDER_LONGBRIDGE_FIRST = (
+        "LongbridgeFetcher",
+        "FinnhubFetcher",
+        "TickFlowFetcher",
+        "AlphaVantageFetcher",
+        "YfinanceFetcher",
+    )
     _CN_INDEX_DAILY_SOURCE_ORDER = (
         "TencentFetcher",
         "AkshareFetcher",
@@ -1997,17 +2012,18 @@ class DataFetcherManager:
             raise DataFetchError(error_summary)
 
         # 美股（含美股指数）使用专用路由；港股走下方通用数据源循环
-        # Failover chain: Finnhub(P2) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
-        # When Longbridge preferred: Longbridge -> Finnhub -> AlphaVantage -> Yfinance
+        # Failover chain: Finnhub(P2) -> TickFlow(Finnhub+0.5) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
+        # When Longbridge preferred: Longbridge -> Finnhub -> TickFlow -> AlphaVantage -> Yfinance
+        # US index: Yfinance -> Finnhub (unchanged)
         if is_us:
             prefer_lb = self._longbridge_preferred(capability="daily_data") and not is_us_index
             if is_us_index:
                 # 指数始终 YFinance 首选（Longbridge 不提供指数K线）
                 source_order = ["YfinanceFetcher", "FinnhubFetcher"]
             elif prefer_lb:
-                source_order = ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher"]
+                source_order = list(self._US_DAILY_SOURCE_ORDER_LONGBRIDGE_FIRST)
             else:
-                source_order = ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
+                source_order = list(self._US_DAILY_SOURCE_ORDER)
             # 消费各数据源当前优先级(含 *_PRIORITY 环境变量):默认优先级与内置链路一致,
             # 单项调整(如 YFINANCE_PRIORITY=0)即时生效;指数/Longbridge preferred 的锚定首选不被普通优先级覆盖
             pin_first = bool(is_us_index or prefer_lb)
@@ -2596,7 +2612,7 @@ class DataFetcherManager:
                     stock_code, primary_quote, secondary_src, **secondary_kw, **target_kwargs,
                 )
             if is_us and not is_us_index and primary_quote is not None:
-                for extra_src in ["FinnhubFetcher", "AlphaVantageFetcher"]:
+                for extra_src in ["FinnhubFetcher", "TickFlowFetcher", "AlphaVantageFetcher"]:
                     primary_quote = self._supplement_quote(
                         stock_code, primary_quote, extra_src, **target_kwargs,
                     )
@@ -2819,6 +2835,8 @@ class DataFetcherManager:
 
         稳定排序:各源默认优先级(Finnhub=2/AlphaVantage=3/Yfinance=4/Longbridge=5)
         与内置链路一致,默认行为不变;单项 *_PRIORITY 调整即时生效。
+        TickFlow 在美股路由中固定为 Finnhub 优先级 + 0.5(Finnhub 缺失时按 2),
+        始终紧跟 Finnhub,不受 TICKFLOW_PRIORITY(A 股日 K 优先级)影响。
         pin_first=True 时保持链路首位(指数固定 Yfinance、Longbridge preferred),
         其余成员按优先级排序。
         """
@@ -2826,6 +2844,8 @@ class DataFetcherManager:
         if not source_order:
             return source_order
         priority_by_name = {f.name: f.priority for f in self._get_fetchers_snapshot()}
+        if "TickFlowFetcher" in priority_by_name:
+            priority_by_name["TickFlowFetcher"] = priority_by_name.get("FinnhubFetcher", 2) + 0.5
         if pin_first:
             pinned, rest = source_order[0], source_order[1:]
             return [pinned] + sorted(rest, key=lambda name: priority_by_name.get(name, 10 ** 9))

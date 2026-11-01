@@ -313,6 +313,7 @@ class StockAnalysisPipeline:
                 news_max_age_days=self.config.news_max_age_days,
                 news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
                 serpapi_us_only=getattr(self.config, "serpapi_us_only", False),
+                provider_markets=getattr(self.config, "search_provider_markets", ""),
             )
         except Exception as exc:
             logger.warning("搜索服务初始化失败，将以无搜索模式运行: %s", exc, exc_info=True)

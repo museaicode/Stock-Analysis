@@ -109,6 +109,7 @@ def build_market_review_runtime(
             news_max_age_days=getattr(config, "news_max_age_days", 3),
             news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
             serpapi_us_only=getattr(config, "serpapi_us_only", False),
+            provider_markets=getattr(config, "search_provider_markets", ""),
         )
 
     analyzer = None

@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 收紧定时模式启动去重：仅当全部应分析标的都成功时才记录当日标记（部分失败或全败、即使大盘复盘成功也不得记录，避免重启漏跑）；跳过判定改为覆盖面子集校验并升版 schema 2（v1 旧标记一律 fail-open 重跑一次以升级），`SCHEDULE_STARTUP_DEDUP` 进程环境变量与 .env 值不同时以进程为准（与 `SCHEDULE_RUN_IMMEDIATELY` 同权）。
 - [修复] 定时模式启动去重检查的预期清单改为与运行入口一致的真实目标解析链（Futu 持仓优先、其次 .env 热更新 `STOCK_LIST`、再按交易日过滤）：`--portfolio futu` 新增持仓、纯持仓部署自选为空、以及进程 env 启动后 .env 热更新三类场景不再误跳过；持仓解析失败或解析为空一律 fail-open 照常执行（绝不漏跑），非持仓空清单保持既有当日去重语义。
 - [新功能] 新增可选配置 `SERPAPI_US_ONLY`（默认 `false`）：开启后 SerpAPI 仅参与美股（含美股大盘复盘）搜索，A 股、港股、非美股大盘复盘与题材搜索跳过 SerpAPI 以节省额度；其余搜索能力顺序不变，SerpAPI 为唯一搜索能力时启动日志会提示非美股将无搜索结果。
+- [新功能] 新增可选配置 `SEARCH_PROVIDER_MARKETS`（默认空，不限制）：按 `provider:market[,market]`（`;` 分隔）把搜索服务分配到 cn/hk/us/jp/kr/tw/topic 市场，如 `anspire:cn,hk,topic;serpapi:us;brave:us`；未写入的服务参与所有市场，`SERPAPI_US_ONLY` 视为 `serpapi:us` 并与表合并（表中显式写 serpapi 时以表为准）；无效条目打 warning 后忽略，启动日志输出分配结果并提示无可用服务的市场。
+- [新功能] TickFlow 支持美股：美股日 K 路由调整为 Finnhub → TickFlow → AlphaVantage → YFinance → Longbridge（Longbridge 优先时为 Longbridge → Finnhub → TickFlow → …），TickFlow 始终紧跟 Finnhub、不受 `TICKFLOW_PRIORITY` 影响；美股成交量按股保留不做"手转股"，美股实时行情参与字段补充，无权限时 15 分钟内跳过；美股指数路由不变。
 
 ## [3.33.0] - 2026-10-15
 

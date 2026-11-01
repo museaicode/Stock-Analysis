@@ -43,9 +43,81 @@ from src.data.stock_mapping import (
     canonicalize_foreign_stock_code,
     foreign_stock_english_aliases,
 )
+from src.services.market_symbol_utils import get_suffix_market
 from src.services.run_diagnostics import record_provider_run, record_provider_run_started
 
 logger = logging.getLogger(__name__)
+
+# SEARCH_PROVIDER_MARKETS: 搜索服务按市场分配
+SEARCH_PROVIDER_NAMES = frozenset(
+    {"anspire", "bocha", "tavily", "brave", "serpapi", "minimax", "searxng"}
+)
+SEARCH_TARGET_MARKETS = frozenset({"cn", "hk", "us", "jp", "kr", "tw", "topic"})
+_SEARCH_MARKET_WILDCARDS = frozenset({"all", "*"})
+# 启动时检查覆盖情况的核心市场
+_SEARCH_CORE_MARKETS = ("cn", "hk", "us", "topic")
+# 大盘复盘（stock_code == "market"）名称 -> 市场，比对时忽略大小写
+_MARKET_REVIEW_NAME_TO_MARKET = {
+    "美股市场": "us",
+    "us market": "us",
+    "港股市场": "hk",
+    "hk market": "hk",
+    "大盘": "cn",
+    "a-share market": "cn",
+    "日本股市": "jp",
+    "japan stock market": "jp",
+    "韩国股市": "kr",
+    "korea stock market": "kr",
+}
+
+
+def parse_search_provider_markets(raw: Optional[str]) -> Dict[str, frozenset]:
+    """解析 SEARCH_PROVIDER_MARKETS。
+
+    格式：``provider:market[,market]``，多条用 ``;`` 或换行分隔，例如
+    ``anspire:cn,hk,topic;serpapi:us;brave:us``。provider 取小写服务名，
+    market 取 cn/hk/us/jp/kr/tw/topic；``all`` 或 ``*`` 表示不限制（从表中移除该服务）。
+    格式无效或市场未知的条目打 warning 后忽略，不影响其余条目。
+    """
+    result: Dict[str, frozenset] = {}
+    if not raw:
+        return result
+    for entry in re.split(r"[;\n]", str(raw)):
+        entry = entry.strip()
+        if not entry:
+            continue
+        provider, sep, markets_raw = entry.partition(":")
+        provider = provider.strip().lower()
+        if not sep or not provider:
+            logger.warning("SEARCH_PROVIDER_MARKETS 条目格式无效，已忽略: %r（应为 provider:market[,market]）", entry)
+            continue
+        if provider not in SEARCH_PROVIDER_NAMES:
+            logger.warning(
+                "SEARCH_PROVIDER_MARKETS 未知搜索服务 %r，已忽略（可选: %s）",
+                provider,
+                ", ".join(sorted(SEARCH_PROVIDER_NAMES)),
+            )
+            continue
+        markets = [m.strip().lower() for m in markets_raw.split(",") if m.strip()]
+        if not markets:
+            logger.warning("SEARCH_PROVIDER_MARKETS 条目 %r 未指定市场，已忽略", entry)
+            continue
+        if any(m in _SEARCH_MARKET_WILDCARDS for m in markets):
+            result.pop(provider, None)
+            continue
+        unknown = [m for m in markets if m not in SEARCH_TARGET_MARKETS]
+        if unknown:
+            logger.warning(
+                "SEARCH_PROVIDER_MARKETS 条目 %r 含未知市场 %s，已忽略未知市场（可选: %s）",
+                entry,
+                ", ".join(unknown),
+                ", ".join(sorted(SEARCH_TARGET_MARKETS)),
+            )
+        valid = frozenset(m for m in markets if m in SEARCH_TARGET_MARKETS)
+        if not valid:
+            continue
+        result[provider] = valid
+    return result
 
 _SEARCH_TIMEOUT_PROCESS_START_METHOD = "spawn"
 _SEARCH_TIMEOUT_PROCESS_JOIN_GRACE_SECONDS = 1.0
@@ -2415,6 +2487,7 @@ class SearchService:
         news_max_age_days: int = 3,
         news_strategy_profile: str = "short",
         serpapi_us_only: bool = False,
+        provider_markets: Optional[str] = None,
     ):
         """
         初始化搜索服务
@@ -2430,7 +2503,9 @@ class SearchService:
             searxng_public_instances_enabled: 未配置自建实例时，是否自动使用公共 SearXNG 实例
             news_max_age_days: 新闻最大时效（天）
             news_strategy_profile: 新闻窗口策略档位（ultra_short/short/medium/long）
-            serpapi_us_only: 开启后 SerpAPI 仅参与美股搜索（A 股/港股/题材等非美股目标跳过 SerpAPI）
+            serpapi_us_only: 开启后 SerpAPI 仅参与美股搜索（A 股/港股/题材等非美股目标跳过 SerpAPI）；
+                等价于 provider_markets 中的 ``serpapi:us``，表中显式写了 serpapi 时以表为准
+            provider_markets: SEARCH_PROVIDER_MARKETS 原始字符串，按市场分配搜索服务
         """
         self._constructor_kwargs: Dict[str, Any] = {
             "bocha_keys": list(bocha_keys or []),
@@ -2445,8 +2520,13 @@ class SearchService:
             "news_max_age_days": int(news_max_age_days),
             "news_strategy_profile": news_strategy_profile,
             "serpapi_us_only": bool(serpapi_us_only),
+            "provider_markets": provider_markets,
         }
         self._serpapi_us_only = bool(serpapi_us_only)
+        self._provider_markets: Dict[str, frozenset] = parse_search_provider_markets(provider_markets)
+        if self._serpapi_us_only and "serpapi" not in self._provider_markets:
+            # SERPAPI_US_ONLY 是 serpapi:us 的简写
+            self._provider_markets["serpapi"] = frozenset({"us"})
         self._providers: List[BaseSearchProvider] = []
         self.news_max_age_days = max(1, news_max_age_days)
         raw_profile = (news_strategy_profile or "short").strip().lower()
@@ -2519,6 +2599,8 @@ class SearchService:
                 logger.warning(
                     "SERPAPI_US_ONLY 已开启且 SerpAPI 是唯一搜索能力，A 股/港股/题材等非美股目标将无搜索结果"
                 )
+        if self._provider_markets:
+            self._log_provider_markets()
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
@@ -2590,29 +2672,91 @@ class SearchService:
         return bool(cls._US_STOCK_RE.match(code) or is_us_index_code(code))
 
     @classmethod
-    def _is_us_search_target(cls, stock_code: Optional[str], stock_name: Optional[str]) -> bool:
-        """判断搜索目标是否为美股（含美股大盘复盘）。"""
+    def _search_target_market(cls, stock_code: Optional[str], stock_name: Optional[str]) -> str:
+        """识别搜索目标所属市场：cn/hk/us/jp/kr/tw/topic。
+
+        未传代码视为题材搜索（topic）；``market`` 为大盘复盘，按名称映射市场。
+        """
         code = (stock_code or "").strip()
+        if not code:
+            return "topic"
         if code.lower() == "market":
             name = (stock_name or "").strip().lower()
-            return name in ("美股市场", "us market")
-        return cls._is_us_stock(code)
+            return _MARKET_REVIEW_NAME_TO_MARKET.get(name, "cn")
+        if cls._is_us_stock(code):
+            return "us"
+        suffix_market = get_suffix_market(code)
+        if suffix_market in ("jp", "kr", "tw"):
+            return suffix_market
+        upper = code.upper()
+        if upper.startswith("HK") or upper.endswith(".HK") or (code.isdigit() and len(code) == 5):
+            return "hk"
+        return "cn"
+
+    @classmethod
+    def _is_us_search_target(cls, stock_code: Optional[str], stock_name: Optional[str]) -> bool:
+        """判断搜索目标是否为美股（含美股大盘复盘）。"""
+        return cls._search_target_market(stock_code, stock_name) == "us"
+
+    def _effective_provider_markets(self) -> Dict[str, frozenset]:
+        markets = getattr(self, "_provider_markets", None)
+        if markets is not None:
+            return markets
+        # 通过 __new__ 创建、未经 __init__ 的实例：按 SERPAPI_US_ONLY 回退
+        if getattr(self, "_serpapi_us_only", False):
+            return {"serpapi": frozenset({"us"})}
+        return {}
 
     def _providers_for_target(
         self,
         stock_code: Optional[str] = None,
         stock_name: Optional[str] = None,
     ) -> List[BaseSearchProvider]:
-        """按 SERPAPI_US_ONLY 过滤当前目标可用的 provider，保持原有优先级顺序。
+        """按 SEARCH_PROVIDER_MARKETS（含 SERPAPI_US_ONLY）过滤当前目标可用的 provider，保持原有优先级顺序。
 
-        未传 stock_code 视为非美股目标（如题材搜索）。
+        不在路由表中的服务不限制市场；未传 stock_code 视为题材搜索（topic）。
         """
-        providers = self._providers
-        if not getattr(self, "_serpapi_us_only", False):
-            return list(providers)
-        if stock_code is not None and self._is_us_search_target(stock_code, stock_name):
-            return list(providers)
-        return [p for p in providers if not isinstance(p, SerpAPISearchProvider)]
+        providers = list(self._providers)
+        table = self._effective_provider_markets()
+        if not table:
+            return providers
+        market = self._search_target_market(stock_code, stock_name)
+        return [
+            p for p in providers
+            if p.name.lower() not in table or market in table[p.name.lower()]
+        ]
+
+    def _log_provider_markets(self) -> None:
+        """启动时输出搜索服务的市场分配情况。"""
+        table = self._provider_markets
+        configured = {p.name.lower() for p in self._providers}
+        assignments = []
+        for provider in self._providers:
+            key = provider.name.lower()
+            markets = table.get(key)
+            assignments.append(f"{provider.name}={','.join(sorted(markets)) if markets else 'all'}")
+        if assignments:
+            logger.info("SEARCH_PROVIDER_MARKETS 已生效，搜索服务市场分配: %s", "; ".join(assignments))
+        inactive = sorted(name for name in table if name not in configured)
+        if inactive:
+            logger.info(
+                "SEARCH_PROVIDER_MARKETS 中的 %s 未配置 Key/实例，暂不生效",
+                ", ".join(inactive),
+            )
+        if not self._providers:
+            return
+        uncovered = [
+            market for market in _SEARCH_CORE_MARKETS
+            if not any(
+                p.name.lower() not in table or market in table[p.name.lower()]
+                for p in self._providers
+            )
+        ]
+        if uncovered:
+            logger.warning(
+                "SEARCH_PROVIDER_MARKETS 分配后以下市场没有可用的搜索服务: %s（这些市场的搜索将无结果）",
+                ", ".join(uncovered),
+            )
 
     @classmethod
     def _should_prefer_chinese_news(
@@ -4967,6 +5111,7 @@ def get_search_service() -> SearchService:
                     news_max_age_days=config.news_max_age_days,
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
                     serpapi_us_only=getattr(config, "serpapi_us_only", False),
+                    provider_markets=getattr(config, "search_provider_markets", ""),
                 )
     
     return _search_service
