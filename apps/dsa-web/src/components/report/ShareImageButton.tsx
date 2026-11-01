@@ -2,7 +2,7 @@ import type React from 'react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Download, Loader2, Share2, X } from 'lucide-react';
-import { historyApi } from '../../api/history';
+import { historyApi, type ShareImageLayout } from '../../api/history';
 import { getParsedApiError, isParsedApiError } from '../../api/error';
 import type { ReportLanguage } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
@@ -13,7 +13,7 @@ import { Tooltip } from '../common/Tooltip';
 
 type DesktopWindow = Window & {
   dsaDesktop?: {
-    renderShareImage?: (recordId: number) => Promise<ArrayBuffer>;
+    renderShareImage?: (recordId: number, layout?: ShareImageLayout) => Promise<ArrayBuffer>;
   };
 };
 
@@ -27,8 +27,19 @@ interface ShareImageButtonProps {
   recordId?: number;
   reportTitle: string;
   reportLanguage?: ReportLanguage;
+  /** 打开预览弹窗时默认选中的版式：报告页为决策卡，"完整分析报告"抽屉为完整报告 */
+  defaultLayout?: ShareImageLayout;
   className?: string;
 }
+
+type LoadedShareImage = { blob: Blob; previewUrl: string };
+
+type ShareImageCache = {
+  recordId: number;
+  images: Partial<Record<ShareImageLayout, LoadedShareImage>>;
+};
+
+const SHARE_IMAGE_LAYOUTS: readonly ShareImageLayout[] = ['card', 'full'];
 
 const TOAST_DURATION_MS = 4000;
 
@@ -124,6 +135,7 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   recordId,
   reportTitle,
   reportLanguage = 'zh',
+  defaultLayout = 'card',
   className = '',
 }) => {
   const desktopRuntime = typeof window !== 'undefined' ? (window as DesktopWindow).dsaDesktop : undefined;
@@ -132,19 +144,25 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   const text = getReportText(normalizeReportLanguage(reportLanguage));
   const titleId = useId();
 
-  // 弹窗与图片都绑定记录 ID，切换记录后自动失效，无需在 effect 中重置状态
+  // 弹窗与图片都绑定记录 ID，切换记录后自动失效，无需在 effect 中重置状态；
+  // 图片按版式分别缓存，弹窗内切换版式时已生成的版式不重复请求。
   const [openRecordId, setOpenRecordId] = useState<number | null>(null);
-  const [image, setImage] = useState<{ recordId: number; blob: Blob; previewUrl: string } | null>(null);
+  const [selectedLayout, setSelectedLayout] = useState<ShareImageLayout>(defaultLayout);
+  const [cache, setCache] = useState<ShareImageCache | null>(null);
   const [toast, setToast] = useState<ShareToast | null>(null);
-  const loadTokenRef = useRef(0);
-  const inFlightRecordRef = useRef<number | null>(null);
+  const generationRef = useRef(0);
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const ownedUrlsRef = useRef<Set<string>>(new Set());
   const toastTimerRef = useRef<number | null>(null);
+  const selectedLayoutRef = useRef<ShareImageLayout>(defaultLayout);
+  const cacheRef = useRef<ShareImageCache | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const isOpen = activeRecordId !== undefined && openRecordId === activeRecordId;
-  const currentImage = image && image.recordId === activeRecordId ? image : null;
+  const recordImages = cache && cache.recordId === activeRecordId ? cache.images : null;
+  const currentImage = recordImages?.[selectedLayout] ?? null;
   const blob = currentImage?.blob ?? null;
   const previewUrl = currentImage?.previewUrl ?? null;
   const isLoading = isOpen && !blob;
@@ -167,21 +185,49 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
     });
   }, [showToast, text.shareImageNotAllowed]);
 
+  // 复制失败多因长图超出浏览器画布尺寸限制（如 iOS Safari），提示改用下载
+  const reportCopyFailure = useCallback((error: unknown) => {
+    console.error(`${text.shareImageCopyFailed}:`, error);
+    showToast({
+      variant: 'danger',
+      title: text.shareImageCopyFailed,
+      message: errorName(error) === 'NotAllowedError' ? text.shareImageNotAllowed : text.shareImageCopyFailedUseDownload,
+    });
+  }, [showToast, text.shareImageCopyFailed, text.shareImageCopyFailedUseDownload, text.shareImageNotAllowed]);
+
   // 切换记录或卸载时丢弃进行中的请求
   useEffect(() => () => {
-    loadTokenRef.current += 1;
-    inFlightRecordRef.current = null;
+    generationRef.current += 1;
+    inFlightRef.current.clear();
   }, [activeRecordId]);
 
   useEffect(() => () => {
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
   }, []);
 
-  // 图片被替换或组件卸载时释放预览 URL
   useEffect(() => {
-    if (!image) return undefined;
-    return () => URL.revokeObjectURL(image.previewUrl);
-  }, [image]);
+    selectedLayoutRef.current = selectedLayout;
+    cacheRef.current = cache;
+  }, [cache, selectedLayout]);
+
+  // 缓存被替换（切换记录）时释放不再引用的预览 URL；卸载时全部释放
+  useEffect(() => {
+    const live = new Set(Object.values(cache?.images ?? {}).map((item) => item.previewUrl));
+    ownedUrlsRef.current.forEach((url) => {
+      if (!live.has(url)) {
+        URL.revokeObjectURL(url);
+        ownedUrlsRef.current.delete(url);
+      }
+    });
+  }, [cache]);
+
+  useEffect(() => {
+    const ownedUrls = ownedUrlsRef.current;
+    return () => {
+      ownedUrls.forEach((url) => URL.revokeObjectURL(url));
+      ownedUrls.clear();
+    };
+  }, []);
 
   // 关闭弹窗不取消进行中的生成，完成后缓存，重新打开时直接展示
   const closeDialog = useCallback(() => {
@@ -230,38 +276,60 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
     };
   }, [closeDialog, isOpen]);
 
-  // 第一步：点击后立即打开弹窗（加载态），图片在弹窗内异步生成。
+  const loadLayout = useCallback((targetRecordId: number, layout: ShareImageLayout) => {
+    if (recordImages?.[layout]) return;
+    const key = `${targetRecordId}:${layout}`;
+    if (inFlightRef.current.has(key)) return;
+
+    const generation = generationRef.current;
+    inFlightRef.current.add(key);
+    void (async () => {
+      try {
+        const loaded = renderDesktopShareImage
+          ? new Blob([await renderDesktopShareImage(targetRecordId, layout)], { type: 'image/png' })
+          : await historyApi.getShareImage(targetRecordId, layout);
+        if (generationRef.current !== generation) return;
+        const previewUrl = URL.createObjectURL(loaded);
+        ownedUrlsRef.current.add(previewUrl);
+        setCache((previous) => {
+          const images = previous && previous.recordId === targetRecordId ? previous.images : {};
+          return { recordId: targetRecordId, images: { ...images, [layout]: { blob: loaded, previewUrl } } };
+        });
+      } catch (error) {
+        if (generationRef.current !== generation) return;
+        reportFailure(text.shareImageLoadFailed, error);
+        // 当前选中版式生成失败：若另一版式已生成则切回它，否则关闭弹窗，可再次点击"分享"重试
+        if (selectedLayoutRef.current !== layout) return;
+        const latest = cacheRef.current;
+        const images = latest && latest.recordId === targetRecordId ? latest.images : {};
+        const fallback = SHARE_IMAGE_LAYOUTS.find((candidate) => candidate !== layout && images[candidate]);
+        if (fallback) setSelectedLayout(fallback);
+        else setOpenRecordId(null);
+      } finally {
+        if (generationRef.current === generation) inFlightRef.current.delete(key);
+      }
+    })();
+  }, [recordImages, renderDesktopShareImage, reportFailure, text.shareImageLoadFailed]);
+
+  // 第一步：点击后立即打开弹窗（加载态），默认选中当前入口对应的版式，图片在弹窗内异步生成。
   // 复制 / 系统分享由弹窗内的下一次点击触发，届时拥有新的用户激活。
   const handleOpen = useCallback(() => {
     if (activeRecordId === undefined) return;
     setOpenRecordId(activeRecordId);
-    if (currentImage || inFlightRecordRef.current === activeRecordId) return;
+    setSelectedLayout(defaultLayout);
+    loadLayout(activeRecordId, defaultLayout);
+  }, [activeRecordId, defaultLayout, loadLayout]);
 
-    const loadToken = loadTokenRef.current + 1;
-    loadTokenRef.current = loadToken;
-    const targetRecordId = activeRecordId;
-    inFlightRecordRef.current = targetRecordId;
-    void (async () => {
-      try {
-        const loaded = renderDesktopShareImage
-          ? new Blob([await renderDesktopShareImage(targetRecordId)], { type: 'image/png' })
-          : await historyApi.getShareImage(targetRecordId);
-        if (loadTokenRef.current !== loadToken) return;
-        setImage({ recordId: targetRecordId, blob: loaded, previewUrl: URL.createObjectURL(loaded) });
-      } catch (error) {
-        if (loadTokenRef.current !== loadToken) return;
-        setOpenRecordId(null);
-        reportFailure(text.shareImageLoadFailed, error);
-      } finally {
-        if (loadTokenRef.current === loadToken) inFlightRecordRef.current = null;
-      }
-    })();
-  }, [activeRecordId, currentImage, renderDesktopShareImage, reportFailure, text.shareImageLoadFailed]);
+  const handleSelectLayout = useCallback((layout: ShareImageLayout) => {
+    if (activeRecordId === undefined || layout === selectedLayout) return;
+    setSelectedLayout(layout);
+    loadLayout(activeRecordId, layout);
+  }, [activeRecordId, loadLayout, selectedLayout]);
 
   const imageType = blob?.type || 'image/png';
   const filename = activeRecordId === undefined
     ? ''
-    : `${safeFilenamePart(reportTitle)}-${activeRecordId}.${extensionForImageType(imageType)}`;
+    : `${safeFilenamePart(reportTitle)}-${activeRecordId}_${selectedLayout}.${extensionForImageType(imageType)}`;
   const file = useMemo(
     () => (blob && filename ? new File([blob], filename, { type: imageType }) : null),
     [blob, filename, imageType],
@@ -285,12 +353,12 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
       const item = new ClipboardItem({ 'image/png': toPngBlob(blob) });
       navigator.clipboard.write([item]).then(
         () => showToast({ variant: 'success', title: text.shareImageCopied }),
-        (error: unknown) => reportFailure(text.shareImageCopyFailed, error),
+        (error: unknown) => reportCopyFailure(error),
       );
     } catch (error) {
-      reportFailure(text.shareImageCopyFailed, error);
+      reportCopyFailure(error);
     }
-  }, [blob, reportFailure, showToast, text.shareImageCopied, text.shareImageCopyFailed]);
+  }, [blob, reportCopyFailure, showToast, text.shareImageCopied]);
 
   const handleSystemShare = useCallback(() => {
     if (!file) return;
@@ -343,6 +411,35 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
           </button>
         </div>
 
+        <div className="border-b border-border/60 px-4 py-2">
+          <div
+            role="group"
+            aria-label={text.shareImageLayoutLabel}
+            className="inline-flex rounded-lg border border-border/70 bg-base/40 p-0.5"
+            data-testid="share-image-layout-switch"
+          >
+            {SHARE_IMAGE_LAYOUTS.map((layout) => {
+              const selected = layout === selectedLayout;
+              return (
+                <button
+                  key={layout}
+                  type="button"
+                  aria-pressed={selected}
+                  data-layout={layout}
+                  onClick={() => handleSelectLayout(layout)}
+                  className={`h-8 rounded-md px-3 text-sm font-medium transition-colors ${
+                    selected
+                      ? 'bg-cyan/80 text-foreground shadow-sm'
+                      : 'text-secondary-text hover:bg-hover hover:text-foreground'
+                  }`}
+                >
+                  {layout === 'full' ? text.shareImageLayoutFull : text.shareImageLayoutCard}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto bg-base/40 p-4">
           {isLoading || !previewUrl ? (
             <div role="status" className="flex h-48 flex-col items-center justify-center gap-3 text-sm text-secondary-text">
@@ -352,6 +449,7 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
           ) : (
             <img
               src={previewUrl}
+              data-layout={selectedLayout}
               alt={text.shareImagePreviewAlt}
               className="mx-auto block w-full rounded-lg border border-border/50"
             />

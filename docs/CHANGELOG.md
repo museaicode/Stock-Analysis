@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [chore] Default new MiniMax channels to MiniMax-M3.1-Flash and MiniMax-M3, filter older text recommendations while retaining saved/custom models, and refresh fallback pricing.
 
 - [修复] 推送图新增 `MARKDOWN_TO_IMAGE_LAYOUT`（`card` 默认 / `full`）：`full` 时单股、多股汇总与大盘复盘的推送图渲染完整报告全文（保留品牌页眉、风险提示与底部品牌信息），企业微信汇总图片同步改用完整报告并沿用压缩/切图；Web 分享按钮仍固定为决策卡。
+- [改进] Web“完整分析报告”抽屉中的“分享”改为默认生成完整报告长图（报告页“分享”仍默认决策卡）；分享预览弹窗新增“决策卡 / 完整报告”切换，已生成的版式在弹窗内缓存，下载 / 复制 / 系统分享使用当前版式，长图复制失败时提示改用下载。`GET /api/v1/history/{id}/share-image` 与 `/share-image-html` 新增查询参数 `layout=card|full`（默认 `card`，旧调用方不变；非法值返回 400），与推送图配置 `MARKDOWN_TO_IMAGE_LAYOUT` 相互独立；下载文件名改为区分版式（`dsa-report-<id>_card.jpg` / `_full.jpg`）；桌面端同步支持。
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [修复] 美股涨跌幅失真：YFinance 实时行情的前收盘价改用常规时段收盘价（`regular_market_previous_close` / `regularMarketPreviousClose` / `prepost=False` 日 K），不再使用含盘后成交的 `fast_info.previous_close`，修复财报盘后大跌时 INTC 显示 -7.23%（实际 -28.58%）的问题；收盘后与非交易日分析时，美股实时涨跌幅与日 K 线最后两根 K 线相差超过 1 个百分点则以日 K 线为准并记录 warning，报告“当日”行情标记为最近已收盘交易日。TickFlow 美股日 K 按 `America/New_York` 计算请求边界和交易日（优先 `trade_date`），Finnhub `/stock/candle` 返回 403 后 24 小时内不再请求、交由后续数据源，`/quote` 不受影响，详见 `docs/data-source-stability.md`。

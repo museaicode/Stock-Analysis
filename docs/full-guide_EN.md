@@ -127,7 +127,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `SAVE_CONTEXT_SNAPSHOT` | Whether to persist analysis-history `context_snapshot`; defaults to `true`. Set to `false` or use `--no-context-snapshot` to stop persisting the full snapshot | Optional |
 | `MARKDOWN_TO_IMAGE_CHANNELS` | Notification channels that receive report images: telegram,wechat,custom,email,slack | Optional |
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | Skip image conversion above this Markdown length (default 15000) | Optional |
-| `MARKDOWN_TO_IMAGE_LAYOUT` | Push image layout: `card` (default, condensed decision card: thesis, levels, technicals, risks, positions) or `full` (the complete report body as a long image, keeping the brand header, risk disclaimer, and configured footer branding). Affects notification images only; the Web share button always uses the decision card. Invalid values fall back to `card` | Optional |
+| `MARKDOWN_TO_IMAGE_LAYOUT` | Push image layout: `card` (default, condensed decision card: thesis, levels, technicals, risks, positions) or `full` (the complete report body as a long image, keeping the brand header, risk disclaimer, and configured footer branding). Affects notification images only; the Web / desktop share button picks its layout through the `layout` request parameter instead. Invalid values fall back to `card` | Optional |
 | `MD2IMG_ENGINE` | Image renderer: `wkhtmltoimage` (default), `markdown-to-file`, or `playwright`. Debian/Ubuntu deployments using `wkhtmltoimage` should install both `wkhtmltopdf` and `fonts-noto-cjk` so supported Chinese and Korean report text renders correctly | Optional |
 | `SHARE_IMAGE_REPO_URL` | Project URL (`http(s)://`) shown in the share/notification image footer; empty by default, and when empty no URL or label is shown | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_URL` | Xiaohongshu profile URL shown in share images; empty disables the link | Optional |
@@ -1555,8 +1555,8 @@ For this feature, the product behavior is:
 | `/api/v1/screening/screen/tasks` | POST | Submit a screening task (`SCREENING_ENABLED` must be enabled first); an optional anonymous `variant_seed` samples a bounded near-score combination per run while preserving materially superior candidates, filters, risk controls, and scores |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | Query screening task status and completed result |
 | `/api/v1/history` | GET | Query analysis history |
-| `/api/v1/history/{record_id}/share-image` | GET | Generate a historical-report share image for browsers, returned as compressed JPEG by default (falls back to PNG when JPEG conversion is not possible); requires an available `MD2IMG_ENGINE` |
-| `/api/v1/history/{record_id}/share-image-html` | GET | Generate restricted poster HTML for capture by the Electron desktop Chromium runtime |
+| `/api/v1/history/{record_id}/share-image` | GET | Generate a historical-report share image for browsers. `layout=card` (default, decision card) or `full` (complete report long image); other values return 400. Returned as compressed JPEG by default (falls back to PNG when JPEG conversion is not possible) with filename `dsa-report-<id>_<layout>.<ext>`; requires an available `MD2IMG_ENGINE` |
+| `/api/v1/history/{record_id}/share-image-html` | GET | Generate restricted poster HTML for capture by the Electron desktop Chromium runtime; also accepts `layout=card|full` (default `card`) |
 | `/api/v1/history/{record_id}/diagnostics` | GET | Query a historical report run diagnostic summary and sanitized copy text |
 | `/api/v1/decision-signals` | POST | Explicitly create or deduplicate a decision signal and return `{ item, created }` |
 | `/api/v1/decision-signals` | GET | Paginated decision-signal query with stock, market, action, phase, profile, source, status, time-range, and cache-only holdings filters |

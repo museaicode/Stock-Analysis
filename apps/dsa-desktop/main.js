@@ -56,6 +56,8 @@ const DESKTOP_BACKEND_DEFAULT_HOST = '127.0.0.1';
 const DESKTOP_SHARE_IMAGE_WIDTH = 1080;
 const DESKTOP_SHARE_IMAGE_INITIAL_HEIGHT = 720;
 const DESKTOP_SHARE_IMAGE_MAX_HEIGHT = 20000;
+// 与后端 share-image-html 的 layout=card|full 查询参数保持一致
+const DESKTOP_SHARE_IMAGE_LAYOUTS = new Set(['card', 'full']);
 const PUBLIC_BIND_HOSTS = Object.freeze(new Set(['0.0.0.0', '::', '[::]', '*']));
 const MAC_DESKTOP_CLI_PATH_ENTRIES = Object.freeze([
   '/opt/homebrew/bin',
@@ -1390,9 +1392,12 @@ function buildMainPageUrl(port, timestamp = Date.now(), host = DESKTOP_BACKEND_D
   return url.toString();
 }
 
-function buildDesktopShareImageUrl(pageUrl, recordId, expectedBackendOrigin = '') {
+function buildDesktopShareImageUrl(pageUrl, recordId, expectedBackendOrigin = '', layout = 'card') {
   if (!Number.isSafeInteger(recordId) || recordId <= 0) {
     throw new Error('Invalid share image record ID');
+  }
+  if (!DESKTOP_SHARE_IMAGE_LAYOUTS.has(layout)) {
+    throw new Error('Invalid share image layout');
   }
 
   let page;
@@ -1414,10 +1419,12 @@ function buildDesktopShareImageUrl(pageUrl, recordId, expectedBackendOrigin = ''
     throw new Error('Desktop share images require the configured backend origin');
   }
 
-  return new URL(
+  const target = new URL(
     `/api/v1/history/${recordId}/share-image-html`,
     page.origin
-  ).toString();
+  );
+  target.searchParams.set('layout', layout);
+  return target.toString();
 }
 
 async function renderDesktopShareImage(
@@ -1426,6 +1433,7 @@ async function renderDesktopShareImage(
     sourceWindow = mainWindow,
     BrowserWindowClass = BrowserWindow,
     backendOrigin = '',
+    layout = 'card',
   } = {}
 ) {
   if (!sourceWindow || sourceWindow.isDestroyed() || !sourceWindow.webContents) {
@@ -1435,7 +1443,8 @@ async function renderDesktopShareImage(
   const targetUrl = buildDesktopShareImageUrl(
     sourceWindow.webContents.getURL(),
     recordId,
-    backendOrigin
+    backendOrigin,
+    layout
   );
   let renderWindow = null;
   try {
@@ -1990,15 +1999,15 @@ ipcMain.handle('desktop:open-release-page', async (_event, releaseUrl) => {
   await shell.openExternal(sanitizeReleaseUrl(releaseUrl));
   return true;
 });
-ipcMain.handle('desktop:render-share-image', async (event, recordId) => {
+ipcMain.handle('desktop:render-share-image', async (event, recordId, layout = 'card') => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
     throw new Error('Share image request did not originate from the desktop window');
   }
   try {
-    return await renderDesktopShareImage(recordId, { backendOrigin: desktopBackendOrigin });
+    return await renderDesktopShareImage(recordId, { backendOrigin: desktopBackendOrigin, layout });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logLine(`[share-image] desktop render failed for record=${recordId}: ${message}`);
+    logLine(`[share-image] desktop render failed for record=${recordId} layout=${layout}: ${message}`);
     throw error;
   }
 });

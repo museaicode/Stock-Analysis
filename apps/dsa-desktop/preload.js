@@ -33,8 +33,8 @@ function createDesktopBridge({
     openReleasePage(releaseUrl) {
       return renderer.invoke(DESKTOP_OPEN_RELEASE_PAGE_CHANNEL, releaseUrl);
     },
-    renderShareImage(recordId) {
-      return renderer.invoke(DESKTOP_RENDER_SHARE_IMAGE_CHANNEL, recordId);
+    renderShareImage(recordId, layout = 'card') {
+      return renderer.invoke(DESKTOP_RENDER_SHARE_IMAGE_CHANNEL, recordId, layout);
     },
     onUpdateStateChange(listener) {
       if (typeof listener !== 'function') {

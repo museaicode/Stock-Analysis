@@ -125,7 +125,7 @@ Discord 长报告发送复用现有分片链路：单条 `content` 运行时不�
 - 推送图版式由 `MARKDOWN_TO_IMAGE_LAYOUT` 控制：
   - `card`（默认）：上述决策卡 / 复盘卡，只提炼关键模块，适合快速浏览。
   - `full`：保留品牌页眉、标题、底部风险提示与已配置的品牌信息，正文改为完整报告 Markdown 全文（表格、各章节、检查清单等都会出现）。单股、多股汇总、大盘复盘推送均适用；企业微信汇总推送的图片也改用完整报告（文本回退仍为企业微信精简仪表盘）。完整正文超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时仍跳过转图、回退文本；超 2MB 的长图由下文企业微信压缩/切图逻辑处理。
-  - 该配置只影响通知推送图；Web / 桌面端“分享”按钮生成的分享图始终为决策卡版式。
+  - 该配置只影响通知推送图；Web / 桌面端“分享”按钮的版式由请求参数 `layout=card|full` 决定（完整分析报告抽屉默认 `full`，报告页默认 `card`），见 [分享图版式与 layout 参数](share-images.md#分享图版式与-layout-参数)。
 - 模板只展示报告已有的 0–100 评分、八态动作和 `battle_plan.sniper_points` 点位；理想/次优买入点、止损位和目标位会使用专门的高对比交易卡片，不生成额外评分或多空占比。
 - 结构化字段、缺失值行为、个股/大盘映射和本地预览示例见 [分享图片模板与数据填充](share-images.md)。
 - `wkhtmltoimage`、`markdown-to-file` 与 `playwright` 使用同一份海报 HTML；现有 `MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 和转换失败后回退文本的行为不变。Playwright 模式需先安装 Web 依赖并执行 `npx playwright install chromium`。

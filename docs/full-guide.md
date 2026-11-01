@@ -139,7 +139,7 @@ daily_stock_analysis/
 | `NOTIFICATION_MIN_SEVERITY` | 最低通知级别：`info`、`warning`、`error`、`critical`；留空保持现状 | 可选 |
 | `NOTIFICATION_DAILY_DIGEST_ENABLED` | 每日摘要预留开关；当前不会发送摘要或持久化摘要内容 | 可选 |
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | 超过此长度不转图片，避免超大图片（默认 15000） | 可选 |
-| `MARKDOWN_TO_IMAGE_LAYOUT` | 推送图版式：`card`（默认，决策卡，只提炼结论/点位/技术/风险/持仓）或 `full`（完整报告正文长图，保留品牌页眉、风险提示和已配置的底部品牌信息）；只影响通知推送图，Web 分享按钮始终为决策卡；非法值回退 `card` | 可选 |
+| `MARKDOWN_TO_IMAGE_LAYOUT` | 推送图版式：`card`（默认，决策卡，只提炼结论/点位/技术/风险/持仓）或 `full`（完整报告正文长图，保留品牌页眉、风险提示和已配置的底部品牌信息）；只影响通知推送图，Web / 桌面分享按钮的版式由请求参数 `layout` 决定；非法值回退 `card` | 可选 |
 | `MD2IMG_ENGINE` | 转图引擎：`wkhtmltoimage`（默认）、`markdown-to-file` 或 `playwright`（需安装 Web 依赖与 Chromium） | 可选 |
 | `SHARE_IMAGE_REPO_URL` | 分享图 / 推送图底部显示的项目地址（`http(s)://`）；默认为空，留空不显示任何地址及标签 | 可选 |
 | `SHARE_IMAGE_XIAOHONGSHU_URL` | 分享图小红书主页 URL；留空不加链接 | 可选 |
@@ -1383,7 +1383,7 @@ PUSHOVER_API_TOKEN=your_api_token
 
 未安装或安装失败时，将自动回退为 Markdown 文本发送。
 
-**推送图版式**：`MARKDOWN_TO_IMAGE_LAYOUT=card`（默认）生成决策卡，`full` 把完整报告全文渲染为长图（单股、多股汇总、大盘复盘均适用；企业微信汇总推送的图片同样改用完整报告，文本回退仍为企业微信精简版）。完整正文超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时仍跳过转图、回退文本。Web / 桌面端“分享”按钮不受该配置影响。
+**推送图版式**：`MARKDOWN_TO_IMAGE_LAYOUT=card`（默认）生成决策卡，`full` 把完整报告全文渲染为长图（单股、多股汇总、大盘复盘均适用；企业微信汇总推送的图片同样改用完整报告，文本回退仍为企业微信精简版）。完整正文超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时仍跳过转图、回退文本。Web / 桌面端“分享”按钮不受该配置影响，版式由请求参数 `layout=card|full` 决定（见 [分享图版式与 layout 参数](share-images.md#分享图版式与-layout-参数)）。
 
 企业微信机器人单张图片上限约 2MB；超限长图会先转 JPEG，仍超限则保持原宽度竖向切分（最多 6 张），超过 6 张或发送失败时回退为文本，详见 [通知渠道说明](notifications.md#企业微信图片大小限制)。
 
@@ -1696,6 +1696,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 - 🗂️ **市场复盘历史独立入口** - 大盘复盘历史通过专用入口与普通个股历史隔离；建议通过 `stock_code=MARKET` + `report_type=market_review` 直接查询与回放大盘复盘记录
 - 🧾 **市场复盘历史可复用** - 大盘复盘任务会持久化到分析历史，`report_type` 为 `market_review`，可直接通过历史列表/详情打开对应 Markdown 或详情页，不会重新触发分析重算
 - 🖨️ **导出 PDF** - 打开“完整分析报告”（个股报告与大盘复盘历史共用同一抽屉），点击“导出 PDF”，在浏览器打印对话框中选择“另存为 PDF”即可；默认文件名为 `{股票名称}_{代码}_{分析日期}_分析报告`，大盘复盘为 `{市场}_大盘复盘_{日期}`。打印时只输出报告全文，隐藏导航、按钮、提示和底层页面，深色主题下也按浅色排版，保留涨跌红绿色，按 A4 分页，结尾附风险提示。手机上：iOS 在 Safari 的打印预览中通过“分享”存为 PDF；Android Chrome 在打印目标中选择“保存为 PDF”。纯前端实现（`window.print()` + 打印样式），不调用后端接口
+- 🖼️ **分享图片** - 报告页与“完整分析报告”抽屉右上角的“分享”按钮生成分享图片，预览弹窗内可在“决策卡”（结论/点位/技术/风险/持仓）与“完整报告”（完整正文长图，含品牌页眉、风险提示与按配置显示的品牌信息）之间切换；抽屉内默认“完整报告”，报告页默认“决策卡”，已生成的版式在弹窗内缓存。可下载、复制图片或调用系统分享（完整报告长图复制失败时提示改用下载）。对应接口 `GET /api/v1/history/{record_id}/share-image?layout=card|full`，与推送图配置 `MARKDOWN_TO_IMAGE_LAYOUT` 相互独立，详见 [分享图片模板与数据填充](share-images.md#web-一键分享)
 - 🧭 **市场位置卡片** - A 股普通分析报告会展示市场题材层和个股位置层，区分大盘主线、主关联题材、题材阶段、个股位置和缺失证据
 - 🧩 **输入数据块可见** - 普通分析报告会在历史详情、同步响应和 completed 任务状态中返回低敏 `AnalysisContextPack` overview，Web 报告页在策略点位和资讯之后默认折叠展示数据块状态、来源、缺失原因和降级摘要
 - 💬 **问股主讨论对象** - 服务端接受明确代码或索引中唯一名称后保存对象；普通追问、刷新、重开和切回会话从服务端恢复。明确切股才更新主对象，比较只扩大本轮范围，首次比较不任选一只；报告跳转只是提示，不自行建立已确认状态。模型失败或停止不撤销已接受的对象。
@@ -1724,8 +1725,8 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 | `/api/v1/screening/screen/tasks` | POST | 后台提交选股任务（需先开启 `SCREENING_ENABLED`） |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | 查询选股任务状态与完成结果 |
 | `/api/v1/history` | GET | 查询分析历史 |
-| `/api/v1/history/{record_id}/share-image` | GET | 生成浏览器版历史报告分享图，默认返回压缩后的 JPEG（无法转 JPEG 时回退 PNG），需要可用的 `MD2IMG_ENGINE` |
-| `/api/v1/history/{record_id}/share-image-html` | GET | 生成供 Electron 桌面端内置 Chromium 截图的受限分享图 HTML |
+| `/api/v1/history/{record_id}/share-image` | GET | 生成浏览器版历史报告分享图，`layout=card`（默认，决策卡）或 `full`（完整报告长图），非法值返回 400；默认返回压缩后的 JPEG（无法转 JPEG 时回退 PNG），文件名 `dsa-report-<id>_<layout>.<ext>`，需要可用的 `MD2IMG_ENGINE` |
+| `/api/v1/history/{record_id}/share-image-html` | GET | 生成供 Electron 桌面端内置 Chromium 截图的受限分享图 HTML，同样支持 `layout=card|full`（默认 `card`） |
 | `/api/v1/history/{record_id}/diagnostics` | GET | 查询历史报告运行诊断摘要与脱敏复制文本 |
 | `/api/v1/history/{record_id}/flow` | GET | 查询历史报告运行流快照，普通个股和 `MARKET/market_review` 大盘复盘复用同一契约 |
 | `/api/v1/decision-signals` | POST | 显式创建或按同源键去重决策信号，返回 `{ item, created }` |

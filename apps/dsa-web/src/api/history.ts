@@ -15,6 +15,9 @@ import type { RunFlowSnapshot } from '../types/runFlow';
 
 // ============ API 接口 ============
 
+/** 分享图版式：card 为决策卡，full 为完整报告长图（与后端 layout 查询参数一致） */
+export type ShareImageLayout = 'card' | 'full';
+
 export interface GetHistoryListParams extends HistoryFilters {
   page?: number;
   limit?: number;
@@ -111,10 +114,12 @@ export const historyApi = {
   /**
    * 生成历史报告分享图片
    * @param recordId 分析历史记录主键 ID
+   * @param layout 分享图版式：card（决策卡，默认）或 full（完整报告长图）
    */
-  getShareImage: async (recordId: number): Promise<Blob> => {
+  getShareImage: async (recordId: number, layout: ShareImageLayout = 'card'): Promise<Blob> => {
     try {
       const response = await apiClient.get<Blob>(`/api/v1/history/${recordId}/share-image`, {
+        params: { layout },
         responseType: 'blob',
       });
       return response.data;

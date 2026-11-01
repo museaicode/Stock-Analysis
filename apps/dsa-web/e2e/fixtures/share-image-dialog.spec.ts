@@ -2,6 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 
 // Mount the real ShareImageButton with production CSS and localization. Only the
 // share-image API response is fixed, so no backend or image renderer is needed.
+// The share button requests `share-image?layout=card|full`.
+const SHARE_IMAGE_URL = /\/api\/v1\/history\/21\/share-image(\?.*)?$/;
+
 const mountShareButton = async (page: Page) => {
   await page.route('**/src/main.tsx', (route) => route.fulfill({
     contentType: 'application/javascript',
@@ -45,12 +48,13 @@ test('share opens a loading dialog immediately, then offers actions from a fresh
   const body = await posterJpeg(page);
   let releaseImage: (() => void) | undefined;
   let imageReleased = Promise.resolve();
-  await page.route('**/api/v1/history/21/share-image', async (route) => {
+  await page.route(SHARE_IMAGE_URL, async (route) => {
+    expect(new URL(route.request().url()).searchParams.get('layout')).toBe('card');
     await imageReleased;
     await route.fulfill({
       status: 200,
       contentType: 'image/jpeg',
-      headers: { 'Content-Disposition': 'attachment; filename="dsa-report-21.jpg"' },
+      headers: { 'Content-Disposition': 'attachment; filename="dsa-report-21_card.jpg"' },
       body,
     });
   });
@@ -83,11 +87,11 @@ test('share opens a loading dialog immediately, then offers actions from a fresh
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('dialog', { name: '分享图' }).getByRole('button', { name: '下载图片' }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe('Moutai-600519-21.jpg');
+  expect(download.suggestedFilename()).toBe('Moutai-600519-21_card.jpg');
 });
 
 test('share-image API failure closes the dialog and shows a toast', async ({ page }, testInfo) => {
-  await page.route('**/api/v1/history/21/share-image', (route) => route.fulfill({
+  await page.route(SHARE_IMAGE_URL, (route) => route.fulfill({
     status: 503,
     contentType: 'application/json',
     body: JSON.stringify({

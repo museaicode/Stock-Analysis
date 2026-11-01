@@ -100,7 +100,7 @@ test('createDesktopBridge delegates update actions to ipcRenderer', async (t) =>
   const originalLoad = Module._load;
   const listeners = new Map();
   const ipcRenderer = {
-    invoke: async (channel, payload) => ({ channel, payload }),
+    invoke: async (channel, payload, ...extra) => (extra.length ? { channel, payload, extra } : { channel, payload }),
     on: (channel, listener) => {
       listeners.set(channel, listener);
     },
@@ -156,6 +156,12 @@ test('createDesktopBridge delegates update actions to ipcRenderer', async (t) =>
   assert.deepEqual(await desktopBridge.renderShareImage(17), {
     channel: preloadModule.DESKTOP_RENDER_SHARE_IMAGE_CHANNEL,
     payload: 17,
+    extra: ['card'],
+  });
+  assert.deepEqual(await desktopBridge.renderShareImage(17, 'full'), {
+    channel: preloadModule.DESKTOP_RENDER_SHARE_IMAGE_CHANNEL,
+    payload: 17,
+    extra: ['full'],
   });
 
   const receivedPayloads = [];

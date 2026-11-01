@@ -129,6 +129,7 @@ export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
             recordId={recordId}
             reportTitle={`${stockName || stockCode}-${stockCode}`}
             reportLanguage={reportLanguage}
+            defaultLayout="full"
           />
           <Tooltip content={text.copyMarkdownSource}>
             <span className="inline-flex">

@@ -78,7 +78,7 @@ describe('ShareImageButton', () => {
     const dialog = screen.getByRole('dialog', { name: '分享图' });
     expect(within(dialog).getByRole('status')).toHaveTextContent('正在生成分享图...');
     expect(within(dialog).queryByRole('button', { name: '下载图片' })).not.toBeInTheDocument();
-    expect(mockedGetShareImage).toHaveBeenCalledWith(17);
+    expect(mockedGetShareImage).toHaveBeenCalledWith(17, 'card');
   });
 
   it('shows the preview and every supported action once the image is loaded', async () => {
@@ -132,7 +132,7 @@ describe('ShareImageButton', () => {
     const dialog = await openDialogAndWaitForPreview();
     fireEvent.click(within(dialog).getByRole('button', { name: '下载图片' }));
 
-    expect(anchors[0].download).toBe('中钨高新-000657-17.jpg');
+    expect(anchors[0].download).toBe('中钨高新-000657-17_card.jpg');
   });
 
   it('invokes navigator.share synchronously from the dialog click with the image file', async () => {
@@ -150,7 +150,7 @@ describe('ShareImageButton', () => {
     expect(nativeShare).toHaveBeenCalledTimes(1);
     const payload = nativeShare.mock.calls[0][0];
     expect(payload.title).toBe('A股市场复盘');
-    expect(payload.files[0].name).toBe('A股市场复盘-18.jpg');
+    expect(payload.files[0].name).toBe('A股市场复盘-18_card.jpg');
     expect(payload.files[0].type).toBe('image/jpeg');
     expect(mockedGetShareImage).toHaveBeenCalledTimes(1);
   });
@@ -225,7 +225,7 @@ describe('ShareImageButton', () => {
     expect(alert).toHaveTextContent('生成分享图失败');
     expect(alert).toHaveTextContent('wkhtmltoimage');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(mockedGetShareImage).toHaveBeenCalledWith(19);
+    expect(mockedGetShareImage).toHaveBeenCalledWith(19, 'card');
 
     // 失败后可重试
     mockedGetShareImage.mockResolvedValue(pngBlob());
@@ -280,7 +280,7 @@ describe('ShareImageButton', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '分享' }));
     expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(mockedGetShareImage).toHaveBeenLastCalledWith(22);
+    expect(mockedGetShareImage).toHaveBeenLastCalledWith(22, 'card');
   });
 
   it('keeps the button hidden for an older desktop bridge without image rendering', () => {
@@ -308,10 +308,179 @@ describe('ShareImageButton', () => {
     renderButton(24, '桌面端报告');
 
     const dialog = await openDialogAndWaitForPreview();
-    await waitFor(() => expect(renderShareImage).toHaveBeenCalledWith(24));
+    await waitFor(() => expect(renderShareImage).toHaveBeenCalledWith(24, 'card'));
     fireEvent.click(within(dialog).getByRole('button', { name: '下载图片' }));
 
     expect(mockedGetShareImage).not.toHaveBeenCalled();
-    expect(anchors[0].download).toBe('桌面端报告-24.png');
+    expect(anchors[0].download).toBe('桌面端报告-24_card.png');
+  });
+  it('tells the user to download instead when copying a large image fails', async () => {
+    enableClipboard(vi.fn().mockRejectedValue(new Error('Canvas area exceeds the maximum limit')));
+    mockedGetShareImage.mockResolvedValue(jpegBlob());
+    renderButton();
+
+    const dialog = await openDialogAndWaitForPreview();
+    fireEvent.click(within(dialog).getByRole('button', { name: '复制图片' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('复制图片失败');
+    expect(alert).toHaveTextContent('改用“下载图片”');
+  });
+});
+
+describe('ShareImageButton layout switch', () => {
+  beforeEach(() => {
+    mockedGetShareImage.mockReset();
+    let urlCounter = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => {
+      urlCounter += 1;
+      return `blob:share-image-${urlCounter}`;
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    Object.defineProperty(window, 'dsaDesktop', { configurable: true, value: undefined });
+    Object.defineProperty(window, 'ClipboardItem', { configurable: true, writable: true, value: undefined });
+    setNavigatorValue('share', undefined);
+    setNavigatorValue('canShare', undefined);
+    setNavigatorValue('clipboard', undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const layoutButton = (dialog: HTMLElement, name: string) => within(
+    within(dialog).getByRole('group', { name: '分享图版式' }),
+  ).getByRole('button', { name });
+
+  it('defaults to the card layout on the report page', async () => {
+    mockedGetShareImage.mockResolvedValue(jpegBlob());
+    renderButton(40, '报告页');
+
+    const dialog = await openDialogAndWaitForPreview();
+
+    expect(mockedGetShareImage).toHaveBeenCalledTimes(1);
+    expect(mockedGetShareImage).toHaveBeenCalledWith(40, 'card');
+    expect(layoutButton(dialog, '决策卡')).toHaveAttribute('aria-pressed', 'true');
+    expect(layoutButton(dialog, '完整报告')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('defaults to the full layout when opened from the full report drawer', async () => {
+    mockedGetShareImage.mockResolvedValue(jpegBlob());
+    render(<ShareImageButton recordId={41} reportTitle="抽屉" reportLanguage="zh" defaultLayout="full" />);
+
+    const dialog = await openDialogAndWaitForPreview();
+
+    expect(mockedGetShareImage).toHaveBeenCalledTimes(1);
+    expect(mockedGetShareImage).toHaveBeenCalledWith(41, 'full');
+    expect(layoutButton(dialog, '完整报告')).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByRole('img', { name: '分享图预览' })).toHaveAttribute('data-layout', 'full');
+  });
+
+  it('reloads with a loading state on switch and reuses generated layouts', async () => {
+    const pending: Record<string, (blob: Blob) => void> = {};
+    mockedGetShareImage.mockImplementation((_recordId, layout = 'card') => new Promise<Blob>((resolve) => {
+      pending[layout] = resolve;
+    }));
+    const anchors: HTMLAnchorElement[] = [];
+    vi.mocked(HTMLAnchorElement.prototype.click).mockImplementation(function (this: HTMLAnchorElement) {
+      anchors.push(this);
+    });
+    render(<ShareImageButton recordId={42} reportTitle="贵州茅台-600519" reportLanguage="zh" defaultLayout="full" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '分享' }));
+    const dialog = screen.getByRole('dialog', { name: '分享图' });
+    await act(async () => {
+      pending.full(jpegBlob());
+    });
+    const fullSrc = within(dialog).getByRole('img', { name: '分享图预览' }).getAttribute('src');
+
+    fireEvent.click(layoutButton(dialog, '决策卡'));
+    expect(mockedGetShareImage).toHaveBeenLastCalledWith(42, 'card');
+    expect(within(dialog).getByRole('status')).toHaveTextContent('正在生成分享图...');
+    expect(within(dialog).queryByRole('img', { name: '分享图预览' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '下载图片' })).not.toBeInTheDocument();
+
+    await act(async () => {
+      pending.card(pngBlob());
+    });
+    const cardImage = within(dialog).getByRole('img', { name: '分享图预览' });
+    expect(cardImage).toHaveAttribute('data-layout', 'card');
+    expect(cardImage.getAttribute('src')).not.toBe(fullSrc);
+    fireEvent.click(within(dialog).getByRole('button', { name: '下载图片' }));
+    expect(anchors[0].download).toBe('贵州茅台-600519-42_card.png');
+
+    // 切回已生成的完整报告：不重复请求，直接显示缓存图片
+    fireEvent.click(layoutButton(dialog, '完整报告'));
+    expect(within(dialog).queryByRole('status')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('img', { name: '分享图预览' })).toHaveAttribute('src', fullSrc);
+    fireEvent.click(within(dialog).getByRole('button', { name: '下载图片' }));
+    expect(anchors[1].download).toBe('贵州茅台-600519-42_full.jpg');
+
+    fireEvent.click(layoutButton(dialog, '决策卡'));
+    expect(mockedGetShareImage).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares and copies the image of the selected layout', async () => {
+    const nativeShare = vi.fn().mockResolvedValue(undefined);
+    const write = vi.fn().mockResolvedValue(undefined);
+    enableFileShare(nativeShare);
+    enableClipboard(write);
+    const cardImage = pngBlob();
+    const fullImage = new Blob(['full-png'], { type: 'image/png' });
+    mockedGetShareImage.mockImplementation(async (_recordId, layout = 'card') => (layout === 'full' ? fullImage : cardImage));
+    renderButton(43, '报告页');
+
+    const dialog = await openDialogAndWaitForPreview();
+    fireEvent.click(layoutButton(dialog, '完整报告'));
+    await within(dialog).findByRole('img', { name: '分享图预览' });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '系统分享' }));
+    expect(nativeShare.mock.calls[0][0].files[0].name).toBe('报告页-43_full.png');
+    fireEvent.click(within(dialog).getByRole('button', { name: '复制图片' }));
+    const [item] = write.mock.calls[0][0] as FakeClipboardItem[];
+    await expect(item.items['image/png']).resolves.toBe(fullImage);
+  });
+
+  it('falls back to the generated layout when switching fails', async () => {
+    mockedGetShareImage.mockImplementation(async (_recordId, layout = 'card') => {
+      if (layout === 'full') throw new Error('full render failed');
+      return jpegBlob();
+    });
+    renderButton(44, '报告页');
+
+    const dialog = await openDialogAndWaitForPreview();
+    fireEvent.click(layoutButton(dialog, '完整报告'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('生成分享图失败');
+    expect(screen.getByRole('dialog', { name: '分享图' })).toBeInTheDocument();
+    expect(layoutButton(dialog, '决策卡')).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByRole('img', { name: '分享图预览' })).toHaveAttribute('data-layout', 'card');
+  });
+
+  it('passes the selected layout to the desktop bridge', async () => {
+    const renderShareImage = vi.fn().mockResolvedValue(new TextEncoder().encode('png').buffer);
+    Object.defineProperty(window, 'dsaDesktop', {
+      configurable: true,
+      value: { version: '3.30.0', renderShareImage },
+    });
+    render(<ShareImageButton recordId={45} reportTitle="桌面端报告" reportLanguage="zh" defaultLayout="full" />);
+
+    const dialog = await openDialogAndWaitForPreview();
+    expect(renderShareImage).toHaveBeenCalledWith(45, 'full');
+    fireEvent.click(layoutButton(dialog, '决策卡'));
+    await waitFor(() => expect(renderShareImage).toHaveBeenLastCalledWith(45, 'card'));
+    expect(mockedGetShareImage).not.toHaveBeenCalled();
+  });
+
+  it('renders English layout labels', async () => {
+    mockedGetShareImage.mockResolvedValue(jpegBlob());
+    render(<ShareImageButton recordId={46} reportTitle="Report" reportLanguage="en" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const group = within(screen.getByRole('dialog', { name: 'Share image' })).getByRole('group', { name: 'Share image layout' });
+    expect(within(group).getByRole('button', { name: 'Card' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(group).getByRole('button', { name: 'Full report' })).toBeInTheDocument();
   });
 });
