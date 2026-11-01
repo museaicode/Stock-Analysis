@@ -162,8 +162,9 @@ for module in src.services.screening.pipeline futu orjson py_mini_racer; do
   fi
 done
 
-# Building the agent tool registry reads the FXMacroData operation catalogue
-# bundled via --collect-data, so probe it in the packaged artifact as well.
+# Build the agent tool registry and check the FXMacroData operation catalogue
+# bundled via --collect-data (the tools themselves are opt-in at runtime via
+# FXMACRODATA_ENABLED, so the probe checks the catalogue directly).
 if DSA_PACKAGED_IMPORT_PROBE="src.agent.factory" "${packaged_entry}" >/tmp/dsa-packaged-import.log 2>&1; then
   cat /tmp/dsa-packaged-import.log
 else

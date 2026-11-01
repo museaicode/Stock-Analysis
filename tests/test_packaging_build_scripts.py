@@ -151,9 +151,20 @@ def test_packaged_miniracer_probe_rejects_wrong_result_and_closes(monkeypatch) -
     assert closed == [True]
 
 
-def _factory_module(names):
+def _factory_module(names, macro_tools=("fxmacrodata_data_catalogue",)):
+    # importlib.import_module is patched to return this one module for both the
+    # factory and the fxmacrodata_tools import inside the probe.
     registry = SimpleNamespace(list_names=lambda: list(names))
-    return SimpleNamespace(get_tool_registry=lambda: registry)
+    return SimpleNamespace(get_tool_registry=lambda: registry, ALL_FXMACRODATA_TOOLS=list(macro_tools))
+
+
+def test_packaged_tool_registry_probe_accepts_default_registry_without_macro_tools(monkeypatch) -> None:
+    # FXMACRODATA_ENABLED defaults to false, so the default registry has no
+    # fxmacrodata_* tools; the probe checks the bundled catalogue instead.
+    module = _factory_module(["get_realtime_quote"])
+    with pytest.raises(SystemExit) as exc:
+        _run_packaged_probe(monkeypatch, module, probe_name="src.agent.factory")
+    assert exc.value.code == 0
 
 
 def test_packaged_tool_registry_probe_accepts_registry_with_macro_tools(monkeypatch) -> None:
@@ -163,10 +174,10 @@ def test_packaged_tool_registry_probe_accepts_registry_with_macro_tools(monkeypa
     assert exc.value.code == 0
 
 
-def test_packaged_tool_registry_probe_rejects_registry_without_macro_tools(
+def test_packaged_tool_registry_probe_rejects_missing_macro_catalogue(
     monkeypatch, capsys,
 ) -> None:
-    module = _factory_module(["get_realtime_quote"])
+    module = _factory_module(["get_realtime_quote"], macro_tools=())
     with pytest.raises(SystemExit) as exc:
         _run_packaged_probe(monkeypatch, module, probe_name="src.agent.factory")
     assert exc.value.code == 1
