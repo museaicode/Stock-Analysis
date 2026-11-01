@@ -3,6 +3,7 @@ import { Component, lazy, Suspense, useCallback, useMemo, useState } from 'react
 import type { ReportLanguage } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 import { Drawer } from '../common/Drawer';
+import { OVERLAY_Z_INDEX } from '../common/overlayLayers';
 
 interface ReportMarkdownDrawerProps {
   recordId: number;
@@ -112,7 +113,7 @@ export const ReportMarkdownDrawer: React.FC<ReportMarkdownDrawerProps> = ({
       isOpen={isOpen}
       onClose={handleClose}
       width="max-w-3xl"
-      zIndex={100}
+      zIndex={OVERLAY_Z_INDEX.reportDrawer}
       backdropClassName="bg-background/56 backdrop-blur-[2px]"
     >
       <ReportMarkdownDrawerErrorBoundary
