@@ -816,6 +816,29 @@ def _record_matches_query_id(record: Any, current_query_id: Optional[str]) -> bo
     )
 
 
+def _record_effective_trading_date(record: Any, region: str) -> Optional[date]:
+    """Map a history record's creation time to the market's effective trading date.
+
+    The payload ``date`` written by market review is the server's natural date,
+    which differs from the target effective trading date on weekends/holidays,
+    before market close, and across time zones (e.g. US market). Converting
+    ``created_at`` with the trading calendar lets such records be reused.
+    Naive ``created_at`` values are treated as server local time.
+    """
+    created_at = getattr(record, "created_at", None)
+    if not isinstance(created_at, datetime):
+        return None
+    try:
+        from src.core.trading_calendar import get_effective_trading_date
+
+        if created_at.tzinfo is None:
+            created_at = created_at.astimezone()
+        return get_effective_trading_date(region, current_time=created_at)
+    except Exception as exc:
+        logger.debug("换算大盘复盘记录有效交易日失败: region=%s, error=%s", region, exc)
+        return None
+
+
 def _record_matches_target_date(
     *,
     record: Any,
@@ -834,13 +857,16 @@ def _record_matches_target_date(
         return language_matches and (
             payload_date == target_date
             or _record_matches_query_id(record, current_query_id)
+            or _record_effective_trading_date(record, region) == target_date
         )
 
     created_date = _coerce_date(getattr(record, "created_at", None))
     if require_query_id_match:
         return _record_matches_query_id(record, current_query_id) and language_matches
     return language_matches and (
-        created_date == target_date or _record_matches_query_id(record, current_query_id)
+        created_date == target_date
+        or _record_matches_query_id(record, current_query_id)
+        or _record_effective_trading_date(record, region) == target_date
     )
 
 

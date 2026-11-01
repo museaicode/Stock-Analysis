@@ -1177,3 +1177,151 @@ def test_daily_market_context_keeps_jp_kr_regions_and_labels() -> None:
 
     assert "市场：日股（jp）" in jp_section
     assert "Region: Korea (kr)" in kr_section
+
+
+def _weekend_history_service(record: SimpleNamespace) -> tuple[MagicMock, DailyMarketContextService]:
+    db = MagicMock()
+    db.get_analysis_history.return_value = [record]
+    service = DailyMarketContextService(
+        db_manager=db,
+        today_fn=lambda: date(2026, 6, 6),
+    )
+    return db, service
+
+
+def _get_weekend_context(
+    service: DailyMarketContextService,
+    *,
+    report_language: str = "zh",
+    region: str = "cn",
+):
+    return service.get_context(
+        region=region,
+        config=SimpleNamespace(report_language=report_language),
+        notifier=MagicMock(),
+        analyzer=MagicMock(),
+        search_service=MagicMock(),
+        target_date=date(2026, 6, 5),
+        allow_generate=False,
+        current_query_id="stock-analysis-q",
+    )
+
+
+def test_reuses_weekend_history_by_effective_trading_date_for_other_query() -> None:
+    # 周六生成的大盘复盘 payload.date 为当天自然日，与目标有效交易日（周五）不同
+    _, service = _weekend_history_service(
+        _history_record(
+            created_at=datetime(2026, 6, 6, 10, 0),
+            payload_date="2026-06-06",
+            query_id="market-review-q",
+        )
+    )
+
+    with patch(
+        "src.core.trading_calendar.get_effective_trading_date",
+        return_value=date(2026, 6, 5),
+    ) as effective_date, patch(
+        "src.services.daily_market_context.run_market_review"
+    ) as run_review:
+        context = _get_weekend_context(service)
+
+    assert context is not None
+    assert context.source == "analysis_history"
+    assert context.trade_date == date(2026, 6, 5)
+    effective_date.assert_called()
+    region_arg = effective_date.call_args.args[0]
+    current_time = effective_date.call_args.kwargs["current_time"]
+    assert region_arg == "cn"
+    assert current_time.tzinfo is not None
+    run_review.assert_not_called()
+
+
+def test_does_not_reuse_history_when_effective_trading_date_differs() -> None:
+    _, service = _weekend_history_service(
+        _history_record(
+            created_at=datetime(2026, 6, 6, 10, 0),
+            payload_date="2026-06-06",
+            query_id="market-review-q",
+        )
+    )
+
+    with patch(
+        "src.core.trading_calendar.get_effective_trading_date",
+        return_value=date(2026, 6, 4),
+    ), patch("src.services.daily_market_context.run_market_review") as run_review:
+        context = _get_weekend_context(service)
+
+    assert context is None
+    run_review.assert_not_called()
+
+
+def test_does_not_reuse_effective_trading_date_history_on_language_mismatch() -> None:
+    _, service = _weekend_history_service(
+        _history_record(
+            created_at=datetime(2026, 6, 6, 10, 0),
+            payload_date="2026-06-06",
+            query_id="market-review-q",
+            report_language="en",
+        )
+    )
+
+    with patch(
+        "src.core.trading_calendar.get_effective_trading_date",
+        return_value=date(2026, 6, 5),
+    ), patch("src.services.daily_market_context.run_market_review") as run_review:
+        context = _get_weekend_context(service, report_language="zh")
+
+    assert context is None
+    run_review.assert_not_called()
+
+
+def test_effective_trading_date_does_not_relax_strict_query_id_match() -> None:
+    _, service = _weekend_history_service(
+        _history_record(
+            created_at=datetime(2026, 6, 6, 10, 0),
+            payload_date="2026-06-06",
+            query_id="market-review-q",
+        )
+    )
+
+    with patch(
+        "src.core.trading_calendar.get_effective_trading_date",
+        return_value=date(2026, 6, 5),
+    ), patch("src.services.daily_market_context.run_market_review") as run_review:
+        context = service.get_context(
+            region="cn",
+            config=SimpleNamespace(report_language="zh"),
+            notifier=MagicMock(),
+            analyzer=MagicMock(),
+            search_service=MagicMock(),
+            target_date=date(2026, 6, 5),
+            allow_generate=False,
+            current_query_id="stock-analysis-q",
+            require_query_id_match=True,
+        )
+
+    assert context is None
+    run_review.assert_not_called()
+
+
+def test_reuses_weekend_history_with_real_trading_calendar() -> None:
+    import pytest
+
+    pytest.importorskip("exchange_calendars")
+    from zoneinfo import ZoneInfo
+
+    # 2026-06-06 是周六；北京时间上午创建的记录有效交易日应为周五 2026-06-05
+    _, service = _weekend_history_service(
+        _history_record(
+            created_at=datetime(2026, 6, 6, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            payload_date="2026-06-06",
+            query_id="market-review-q",
+        )
+    )
+
+    with patch("src.services.daily_market_context.run_market_review") as run_review:
+        context = _get_weekend_context(service)
+
+    assert context is not None
+    assert context.source == "analysis_history"
+    run_review.assert_not_called()
