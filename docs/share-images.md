@@ -22,6 +22,18 @@
 
 `MARKDOWN_TO_IMAGE_CHANNELS`、`MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 继续控制哪些通知渠道转图、使用哪个引擎以及最大输入长度。转换失败时仍回退为文本通知。
 
+### 版式：card 与 full
+
+`MARKDOWN_TO_IMAGE_LAYOUT` 决定**通知推送图**的正文版式（`build_share_image_html(..., layout=...)`）：
+
+| 版式 | 正文内容 | 适用场景 |
+| --- | --- | --- |
+| `card`（默认） | 上文所述个股决策卡 / 市场复盘卡，只提炼结论、点位、技术、风险、持仓等模块 | 快速浏览、社交传播 |
+| `full` | 完整报告 Markdown 全文（所有章节、表格、检查清单），页眉品牌栏、标题、底部风险提示与已配置的品牌信息保持不变，副标题显示“完整分析报告” | 需要在推送中阅读完整分析 |
+
+- `full` 对单股、多股汇总、大盘复盘推送一致生效；企业微信超 2MB 的长图会被压缩/切图（见 [通知渠道说明](notifications.md#企业微信图片大小限制)）。完整正文超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时跳过转图、回退文本。
+- Web / 桌面端“分享”按钮（`/api/v1/history/{id}/share-image` 与 `/share-image-html`）固定使用 `card`，不受该配置影响。
+
 分享图需要运行环境提供对应语言字体。官方 Docker 镜像已内置 Noto CJK 字体；Debian/Ubuntu 源码部署使用默认 `wkhtmltoimage` 引擎时，应安装 `wkhtmltopdf fonts-noto-cjk`。如果只安装转图工具而缺少 CJK 字体，中文或韩文可能在 PNG 中消失，只剩数字、英文和边框。
 `fonts-noto-cjk` 是 Debian 字体包名，不代表新增日文报告语言。项目的报告输出仍只支持 `REPORT_LANGUAGE=zh|en|ko`；日股个股和日本市场复盘中的日文原生名称由通用 Noto CJK fallback 覆盖，页面语言仍跟随所选报告语言，不会根据 `7203.T` 或 `region=jp` 切换成未支持的 `ja` 输出。
 

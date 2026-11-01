@@ -62,6 +62,7 @@ from src.config import get_config
 from src.md2img import markdown_to_image
 from src.utils.image_compress import compress_image_to_jpeg
 from src.share_image import (
+    SHARE_IMAGE_LAYOUT_CARD,
     ShareImageBranding,
     build_share_image_html,
     share_image_branding_from_config,
@@ -871,6 +872,7 @@ def get_history_share_image_html(
             markdown_content,
             structured_payload=_history_share_image_payload(result),
             branding=_history_share_image_branding(config),
+            layout=SHARE_IMAGE_LAYOUT_CARD,
         )
     except Exception as exc:
         logger.error("Share image HTML generation failed for %s: %s", record_id, exc)
@@ -921,6 +923,8 @@ def get_history_share_image(
         markdown_content,
         max_chars=getattr(config, "markdown_to_image_max_chars", 15000),
         structured_payload=_history_share_image_payload(result),
+        # Web 分享按钮固定使用决策卡版式，不受推送图 MARKDOWN_TO_IMAGE_LAYOUT 影响。
+        layout=SHARE_IMAGE_LAYOUT_CARD,
     )
     if image_bytes is None:
         engine = getattr(config, "md2img_engine", "wkhtmltoimage")

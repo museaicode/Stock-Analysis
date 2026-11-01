@@ -1281,6 +1281,7 @@ class Config:
     # Markdown 转图片（Issue #289）：对不支持 Markdown 的渠道以图片发送
     markdown_to_image_channels: List[str] = field(default_factory=list)  # 逗号分隔：telegram,wechat,custom,email
     markdown_to_image_max_chars: int = 15000  # 超过此长度不转换，避免超大图片
+    markdown_to_image_layout: str = "card"  # 推送图版式：card（决策卡）| full（完整报告长图）
     md2img_engine: str = "wkhtmltoimage"  # wkhtmltoimage | markdown-to-file | playwright
     share_image_repo_url: Optional[str] = None  # 分享图底部项目地址；留空不显示
     share_image_xiaohongshu_url: Optional[str] = None
@@ -2289,6 +2290,9 @@ class Config:
                 field_name='MARKDOWN_TO_IMAGE_MAX_CHARS',
                 minimum=1,
             ),
+            markdown_to_image_layout=cls._parse_markdown_to_image_layout(
+                os.getenv('MARKDOWN_TO_IMAGE_LAYOUT', 'card')
+            ),
             md2img_engine=cls._parse_md2img_engine(os.getenv('MD2IMG_ENGINE', 'wkhtmltoimage')),
             share_image_repo_url=(os.getenv('SHARE_IMAGE_REPO_URL') or '').strip() or None,
             share_image_xiaohongshu_url=(os.getenv('SHARE_IMAGE_XIAOHONGSHU_URL') or '').strip() or None,
@@ -3162,6 +3166,19 @@ class Config:
                 "(valid: wkhtmltoimage | markdown-to-file | playwright)"
             )
         return 'wkhtmltoimage'
+
+    @classmethod
+    def _parse_markdown_to_image_layout(cls, value: str) -> str:
+        """Parse MARKDOWN_TO_IMAGE_LAYOUT, fallback to card for invalid values."""
+        v = (value or 'card').strip().lower()
+        if v in ('card', 'full'):
+            return v
+        import logging
+        logging.getLogger(__name__).warning(
+            "MARKDOWN_TO_IMAGE_LAYOUT '%s' invalid, fallback to 'card' (valid: card | full)",
+            value,
+        )
+        return 'card'
 
     @classmethod
     def _resolve_realtime_source_priority(cls) -> str:

@@ -143,6 +143,14 @@ def _share_image_payload(result: Any) -> Optional[Dict[str, Any]]:
     return payload if isinstance(payload, dict) and payload else None
 
 
+def _markdown_to_image_layout(config: Any) -> str:
+    """Resolve MARKDOWN_TO_IMAGE_LAYOUT for push images (card | full, default card)."""
+
+    from src.share_image import normalize_share_image_layout
+
+    return normalize_share_image_layout(getattr(config, "markdown_to_image_layout", None))
+
+
 def _supports_explicit_keyword(callable_obj: Any, keyword: str) -> bool:
     """Avoid breaking custom notifier overrides that predate an optional kwarg."""
 
@@ -4003,8 +4011,15 @@ class StockAnalysisPipeline:
                             }
                             if single_share_payload is not None:
                                 wechat_image_kwargs["structured_payload"] = single_share_payload
+                            # full 版式：图片渲染完整报告正文（长图由企业微信压缩/切图处理）；
+                            # 文本回退仍使用受字节限制的企业微信仪表盘。
+                            wechat_image_source = (
+                                report
+                                if _markdown_to_image_layout(self.config) == "full"
+                                else dashboard_content
+                            )
                             wechat_image_bytes = markdown_to_image(
-                                dashboard_content,
+                                wechat_image_source,
                                 **wechat_image_kwargs,
                             )
                             if wechat_image_bytes is None:
