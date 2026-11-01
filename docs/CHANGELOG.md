@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 日志新增全局脱敏 Filter（`SensitiveDataFilter`，复用 `src/utils/sanitize.py`）：控制台与日志文件中的 Telegram `/bot<token>/`、URL 中的 `key`/`token`/`access_token`/`sendkey` 等参数、企业微信/钉钉/飞书/Server酱等 Webhook 地址及异常堆栈均做掩码；各通知渠道记录异常和响应内容前也先脱敏。`00-daily-analysis.yml` 的 artifact 不再上传 `logs/`，`reports/` 保留期由 30 天改为 3 天（公开仓库的 artifact 任何人可下载），详见 `docs/notifications.md`、`docs/DEPLOY.md`。
 - [改进] FXMacroData 宏观数据工具改为默认关闭：新增 `FXMACRODATA_ENABLED`（默认 `false`），为 `false` 时不注册 `fxmacrodata_*` Agent 工具、不访问 fxmacrodata.com，专业 Agent 静默跳过；工具返回的 `provider_url` 去掉 utm 参数；GitHub Actions 同步映射该变量，详见 `docs/FXMACRODATA.md`。
 - [改进] Web 设置页 LLM 渠道模板中的 Modelflare、AIHubmix、Anspire 链接及 `AIHUBMIX_KEY` 说明文字改为不带 aff / share_code / utm / ref 参数的官网地址（AIHubmix 使用 `https://aihubmix.com`）；README、docs、`.env.example` 中的推荐链接暂不改动。
+- [改进] 设置页帮助链接改为指向本仓库文档：`config_registry.py` 与 Web `LLMChannelEditor` 中写死的原项目文档链接集中为 `DOCS_BASE_URL`（后端 `src/core/config_registry.py`、前端 `apps/dsa-web/src/utils/constants.ts`，两处互相注释引用并由测试校验一致），指向 `https://github.com/museaicode/Stock-Analysis/blob/main/docs/`。
 
 ## [3.33.0] - 2026-10-15
 

@@ -17,6 +17,7 @@ import {
   isKnownProviderTemplate,
 } from './llmProviderTemplates';
 import { SettingsHelpButton } from './SettingsHelpButton';
+import { DOCS_BASE_URL } from '../../utils/constants';
 
 const PROTOCOL_OPTIONS: Array<{ value: ChannelProtocol; label: string }> = [
   { value: 'openai', label: 'OpenAI Compatible' },
@@ -175,11 +176,11 @@ interface ChannelRowProps {
 const LLM_CHANNEL_HELP_DOCS = [
   {
     label: 'LLM 配置指南',
-    href: 'https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md',
+    href: `${DOCS_BASE_URL}LLM_CONFIG_GUIDE.md`,
   },
   {
     label: 'LLM 服务商配置速查',
-    href: 'https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/llm-providers.md',
+    href: `${DOCS_BASE_URL}llm-providers.md`,
   },
 ];
 
