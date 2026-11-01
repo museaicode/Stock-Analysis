@@ -1,5 +1,6 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
+import { attachParsedApiError } from './error';
 import type {
   HistoryListResponse,
   HistoryItem,
@@ -22,6 +23,23 @@ export interface GetHistoryListParams extends HistoryFilters {
 export interface GetHistoryListOptions {
   signal?: AbortSignal;
 }
+
+const parseBlobErrorBody = async (error: unknown): Promise<void> => {
+  const response = (error as { response?: { data?: unknown } } | null)?.response;
+  const body = response?.data;
+  if (!response || typeof Blob === 'undefined' || !(body instanceof Blob)) return;
+  try {
+    const text = await body.text();
+    try {
+      response.data = JSON.parse(text);
+    } catch {
+      response.data = text;
+    }
+    attachParsedApiError(error);
+  } catch {
+    // 保留拦截器已生成的通用错误信息
+  }
+};
 
 export const historyApi = {
   /**
@@ -95,10 +113,16 @@ export const historyApi = {
    * @param recordId 分析历史记录主键 ID
    */
   getShareImage: async (recordId: number): Promise<Blob> => {
-    const response = await apiClient.get<Blob>(`/api/v1/history/${recordId}/share-image`, {
-      responseType: 'blob',
-    });
-    return response.data;
+    try {
+      const response = await apiClient.get<Blob>(`/api/v1/history/${recordId}/share-image`, {
+        responseType: 'blob',
+      });
+      return response.data;
+    } catch (error) {
+      // responseType=blob 时错误体也是 Blob，解析为 JSON 后重新生成可读错误信息
+      await parseBlobErrorBody(error);
+      throw error;
+    }
   },
 
   /**

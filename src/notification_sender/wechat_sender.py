@@ -11,14 +11,19 @@ import base64
 import hashlib
 import io
 import math
-import warnings
 import requests
 import time
-from contextlib import contextmanager
-from typing import Iterator, List, Optional
+from typing import List, Optional
 
 from src.config import Config
 from src.formatters import chunk_content_by_max_bytes, strip_hidden_markdown_metadata
+from src.utils.image_compress import (
+    JPEG_MAX_DIMENSION,
+    REPORT_IMAGE_MAX_PIXELS,
+    encode_jpeg,
+    relaxed_pil_pixel_limit,
+    to_rgb,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -33,35 +38,19 @@ WECHAT_IMAGE_MAX_SEGMENTS = 6
 # 多张图片之间的发送间隔（企业微信机器人限流 20 条/分钟）
 WECHAT_IMAGE_SEND_INTERVAL_SECONDS = 1.0
 # JPEG 单边像素上限（libjpeg 限制 65535，Pillow 保守取 65500）
-_JPEG_MAX_DIMENSION = 65500
+_JPEG_MAX_DIMENSION = JPEG_MAX_DIMENSION
 # 仅在 _prepare_wechat_images 内放宽的 Pillow 像素上限（报告长图由本系统生成，可信）
-_WECHAT_IMAGE_MAX_PIXELS = 300_000_000
+_WECHAT_IMAGE_MAX_PIXELS = REPORT_IMAGE_MAX_PIXELS
 
 
-@contextmanager
-def _relaxed_pil_pixel_limit() -> Iterator[None]:
+def _relaxed_pil_pixel_limit():
     """临时放宽 Pillow 的 MAX_IMAGE_PIXELS 并屏蔽 DecompressionBombWarning，退出时恢复。"""
-    from PIL import Image
-
-    previous = Image.MAX_IMAGE_PIXELS
-    if previous is not None and previous < _WECHAT_IMAGE_MAX_PIXELS:
-        Image.MAX_IMAGE_PIXELS = _WECHAT_IMAGE_MAX_PIXELS
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
-            yield
-    finally:
-        Image.MAX_IMAGE_PIXELS = previous
+    return relaxed_pil_pixel_limit(_WECHAT_IMAGE_MAX_PIXELS)
 
 
 def _encode_jpeg(image, quality: int) -> Optional[bytes]:
     """将 RGB 图片编码为 JPEG；尺寸超出 JPEG 上限时返回 None。"""
-    width, height = image.size
-    if width > _JPEG_MAX_DIMENSION or height > _JPEG_MAX_DIMENSION:
-        return None
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=quality, optimize=True)
-    return buffer.getvalue()
+    return encode_jpeg(image, quality, max_dimension=_JPEG_MAX_DIMENSION)
 
 
 def _encode_jpeg_within_limit(image) -> Optional[tuple]:
@@ -73,18 +62,7 @@ def _encode_jpeg_within_limit(image) -> Optional[tuple]:
     return None
 
 
-def _to_rgb(image):
-    """转为 RGB；带透明通道时铺白底，避免透明区域变黑。"""
-    from PIL import Image
-
-    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
-        rgba = image.convert("RGBA")
-        background = Image.new("RGB", rgba.size, (255, 255, 255))
-        background.paste(rgba, mask=rgba.getchannel("A"))
-        return background
-    if image.mode != "RGB":
-        return image.convert("RGB")
-    return image
+_to_rgb = to_rgb
 
 
 def _prepare_wechat_images(image_bytes: bytes) -> Optional[List[bytes]]:

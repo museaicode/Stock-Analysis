@@ -60,6 +60,7 @@ from src.analysis_context_pack_overview import (
 from src.market_phase_summary import extract_market_phase_summary
 from src.config import get_config
 from src.md2img import markdown_to_image
+from src.utils.image_compress import compress_image_to_jpeg
 from src.share_image import (
     ShareImageBranding,
     build_share_image_html,
@@ -70,6 +71,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _DELETE_BY_CODE_BATCH_SIZE = 10_000
+# Web 分享图默认以 JPEG 返回：完整报告长图 PNG 可达约 10MB，JPEG q85 通常只有其几分之一
+SHARE_IMAGE_JPEG_QUALITY = 85
 
 
 def _history_share_image_payload(result: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
@@ -893,13 +896,19 @@ def get_history_share_image_html(
     "/{record_id}/share-image",
     response_class=Response,
     responses={
-        200: {"description": "PNG 分享图片", "content": {"image/png": {}}},
+        200: {
+            "description": "分享图片：默认压缩为 JPEG；无法转 JPEG 时（如高度超过 JPEG 上限）返回原始 PNG",
+            "content": {"image/jpeg": {}, "image/png": {}},
+        },
         404: {"description": "报告不存在", "model": ErrorResponse},
         500: {"description": "报告生成失败", "model": ErrorResponse},
         503: {"description": "图片渲染器不可用", "model": ErrorResponse},
     },
     summary="生成历史报告分享图片",
-    description="根据历史报告 Markdown 与持久化结构化数据生成确定性的 PNG 分享图片",
+    description=(
+        "根据历史报告 Markdown 与持久化结构化数据生成确定性的分享图片；"
+        "默认返回 JPEG（quality 85），Content-Type 与文件扩展名跟随实际格式"
+    ),
 )
 def get_history_share_image(
     record_id: str,
@@ -923,10 +932,24 @@ def get_history_share_image(
             },
         )
 
-    filename = f"dsa-report-{result.get('id') or record_id}.png"
+    jpeg_bytes = compress_image_to_jpeg(image_bytes, quality=SHARE_IMAGE_JPEG_QUALITY)
+    if jpeg_bytes is not None:
+        logger.info(
+            "Share image %s compressed: PNG %d bytes -> JPEG %d bytes (quality=%d)",
+            record_id, len(image_bytes), len(jpeg_bytes), SHARE_IMAGE_JPEG_QUALITY,
+        )
+        content, media_type, extension = jpeg_bytes, "image/jpeg", "jpg"
+    else:
+        logger.warning(
+            "Share image %s could not be converted to JPEG; returning original PNG (%d bytes)",
+            record_id, len(image_bytes),
+        )
+        content, media_type, extension = image_bytes, "image/png", "png"
+
+    filename = f"dsa-report-{result.get('id') or record_id}.{extension}"
     return Response(
-        content=image_bytes,
-        media_type="image/png",
+        content=content,
+        media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",

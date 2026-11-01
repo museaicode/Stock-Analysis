@@ -1552,7 +1552,7 @@ For this feature, the product behavior is:
 | `/api/v1/screening/screen/tasks` | POST | Submit a screening task (`SCREENING_ENABLED` must be enabled first); an optional anonymous `variant_seed` samples a bounded near-score combination per run while preserving materially superior candidates, filters, risk controls, and scores |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | Query screening task status and completed result |
 | `/api/v1/history` | GET | Query analysis history |
-| `/api/v1/history/{record_id}/share-image` | GET | Generate a historical-report PNG for browsers; requires an available `MD2IMG_ENGINE` |
+| `/api/v1/history/{record_id}/share-image` | GET | Generate a historical-report share image for browsers, returned as compressed JPEG by default (falls back to PNG when JPEG conversion is not possible); requires an available `MD2IMG_ENGINE` |
 | `/api/v1/history/{record_id}/share-image-html` | GET | Generate restricted poster HTML for capture by the Electron desktop Chromium runtime |
 | `/api/v1/history/{record_id}/diagnostics` | GET | Query a historical report run diagnostic summary and sanitized copy text |
 | `/api/v1/decision-signals` | POST | Explicitly create or deduplicate a decision signal and return `{ item, created }` |

@@ -1,9 +1,13 @@
 import type React from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Loader2, Share2, TriangleAlert } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Copy, Download, Loader2, Share2, X } from 'lucide-react';
 import { historyApi } from '../../api/history';
+import { getParsedApiError, isParsedApiError } from '../../api/error';
 import type { ReportLanguage } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
+import { InlineAlert } from '../common/InlineAlert';
+import { ToastViewport } from '../common/ToastViewport';
 import { Tooltip } from '../common/Tooltip';
 
 type DesktopWindow = Window & {
@@ -12,7 +16,11 @@ type DesktopWindow = Window & {
   };
 };
 
-type ShareState = 'idle' | 'loading' | 'ready' | 'success' | 'error';
+type ShareToast = {
+  variant: 'success' | 'danger';
+  title: string;
+  message?: string;
+};
 
 interface ShareImageButtonProps {
   recordId?: number;
@@ -21,9 +29,17 @@ interface ShareImageButtonProps {
   className?: string;
 }
 
+const TOAST_DURATION_MS = 4000;
+
 const safeFilenamePart = (value: string): string => {
   const normalized = value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
   return normalized.slice(0, 72) || 'report';
+};
+
+const extensionForImageType = (type: string): string => {
+  if (type === 'image/jpeg') return 'jpg';
+  if (type === 'image/webp') return 'webp';
+  return 'png';
 };
 
 const downloadBlob = (blob: Blob, filename: string): void => {
@@ -33,6 +49,72 @@ const downloadBlob = (blob: Blob, filename: string): void => {
   anchor.download = filename;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+};
+
+const errorName = (error: unknown): string | undefined => (
+  typeof error === 'object' && error !== null && 'name' in error
+    ? String((error as { name?: unknown }).name)
+    : undefined
+);
+
+const errorMessage = (error: unknown): string | undefined => {
+  if (isParsedApiError(error) || (typeof error === 'object' && error !== null && 'parsedError' in error)) {
+    const parsed = getParsedApiError(error);
+    // 有 HTTP 响应时优先展示服务端返回的具体原因（如转图工具不可用），网络层错误使用分类后的提示
+    return parsed.status !== undefined ? parsed.rawMessage : parsed.message;
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return undefined;
+};
+
+const supportsImageClipboard = (): boolean => (
+  typeof navigator !== 'undefined'
+  && typeof navigator.clipboard?.write === 'function'
+  && typeof window !== 'undefined'
+  && typeof (window as Window & { ClipboardItem?: unknown }).ClipboardItem === 'function'
+);
+
+const supportsFileShare = (file: File | null): boolean => {
+  if (!file || typeof navigator === 'undefined') return false;
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false;
+  try {
+    return navigator.canShare({ files: [file] });
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * 剪贴板普遍只接受 image/png；JPEG 分享图在写入前转为 PNG。
+ * 转换以 Promise 形式交给 ClipboardItem，使 clipboard.write 仍在点击事件内同步调用。
+ */
+const toPngBlob = (blob: Blob): Promise<Blob> => {
+  if (blob.type === 'image/png') return Promise.resolve(blob);
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        reject(new Error('Canvas 2D context unavailable'));
+        return;
+      }
+      context.drawImage(image, 0, 0);
+      canvas.toBlob((pngBlob) => {
+        if (pngBlob) resolve(pngBlob);
+        else reject(new Error('PNG conversion failed'));
+      }, 'image/png');
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Image decode failed'));
+    };
+    image.src = objectUrl;
+  });
 };
 
 export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
@@ -45,152 +127,255 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   const renderDesktopShareImage = desktopRuntime?.renderShareImage;
   const activeRecordId = desktopRuntime && !renderDesktopShareImage ? undefined : recordId;
   const text = getReportText(normalizeReportLanguage(reportLanguage));
-  const [stateSnapshot, setStateSnapshot] = useState<{
-    recordId?: number;
-    state: ShareState;
-  }>(() => ({
-    recordId: activeRecordId,
-    state: 'idle',
-  }));
-  const resetTimerRef = useRef<number | null>(null);
+  const titleId = useId();
+
+  // 弹窗与图片都绑定记录 ID，切换记录后自动失效，无需在 effect 中重置状态
+  const [openRecordId, setOpenRecordId] = useState<number | null>(null);
+  const [image, setImage] = useState<{ recordId: number; blob: Blob; previewUrl: string } | null>(null);
+  const [toast, setToast] = useState<ShareToast | null>(null);
   const loadTokenRef = useRef(0);
-  const cachedImageRef = useRef<{ recordId: number; blob: Blob } | null>(null);
-  const state = stateSnapshot.recordId === activeRecordId ? stateSnapshot.state : 'idle';
-  const setState = useCallback((nextState: ShareState) => {
-    setStateSnapshot({ recordId: activeRecordId, state: nextState });
-  }, [activeRecordId]);
-  const clearResetTimer = useCallback(() => {
-    if (resetTimerRef.current !== null) {
-      window.clearTimeout(resetTimerRef.current);
-      resetTimerRef.current = null;
-    }
+  const inFlightRecordRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const isOpen = activeRecordId !== undefined && openRecordId === activeRecordId;
+  const currentImage = image && image.recordId === activeRecordId ? image : null;
+  const blob = currentImage?.blob ?? null;
+  const previewUrl = currentImage?.previewUrl ?? null;
+  const isLoading = isOpen && !blob;
+
+  const showToast = useCallback((nextToast: ShareToast) => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    setToast(nextToast);
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToast(null);
+    }, TOAST_DURATION_MS);
   }, []);
 
-  const scheduleReset = useCallback(() => {
-    clearResetTimer();
-    const scheduledRecordId = activeRecordId;
-    resetTimerRef.current = window.setTimeout(() => {
-      setStateSnapshot((current) => (
-        current.recordId === scheduledRecordId
-          ? { recordId: scheduledRecordId, state: 'idle' }
-          : current
-      ));
-    }, 2200);
-  }, [activeRecordId, clearResetTimer]);
+  const reportFailure = useCallback((title: string, error: unknown) => {
+    console.error(`${title}:`, error);
+    showToast({
+      variant: 'danger',
+      title,
+      message: errorName(error) === 'NotAllowedError' ? text.shareImageNotAllowed : errorMessage(error),
+    });
+  }, [showToast, text.shareImageNotAllowed]);
+
+  // 切换记录或卸载时丢弃进行中的请求
+  useEffect(() => () => {
+    loadTokenRef.current += 1;
+    inFlightRecordRef.current = null;
+  }, [activeRecordId]);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+  }, []);
+
+  // 图片被替换或组件卸载时释放预览 URL
+  useEffect(() => {
+    if (!image) return undefined;
+    return () => URL.revokeObjectURL(image.previewUrl);
+  }, [image]);
+
+  // 关闭弹窗不取消进行中的生成，完成后缓存，重新打开时直接展示
+  const closeDialog = useCallback(() => {
+    setOpenRecordId(null);
+  }, []);
 
   useEffect(() => {
-    clearResetTimer();
-    loadTokenRef.current += 1;
-    cachedImageRef.current = null;
-
-    return () => {
-      clearResetTimer();
-      loadTokenRef.current += 1;
+    if (!isOpen) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeDialog();
     };
-  }, [activeRecordId, clearResetTimer]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeDialog, isOpen]);
 
-  const handleShare = useCallback(async () => {
-    if (activeRecordId === undefined || state === 'loading') return;
-    clearResetTimer();
+  // 第一步：点击后立即打开弹窗（加载态），图片在弹窗内异步生成。
+  // 复制 / 系统分享由弹窗内的下一次点击触发，届时拥有新的用户激活。
+  const handleOpen = useCallback(() => {
+    if (activeRecordId === undefined) return;
+    setOpenRecordId(activeRecordId);
+    if (currentImage || inFlightRecordRef.current === activeRecordId) return;
 
-    let blob = cachedImageRef.current?.recordId === activeRecordId
-      ? cachedImageRef.current.blob
-      : null;
-    let generatedNow = false;
-
-    if (!blob) {
-      const loadToken = loadTokenRef.current + 1;
-      loadTokenRef.current = loadToken;
-      setState('loading');
+    const loadToken = loadTokenRef.current + 1;
+    loadTokenRef.current = loadToken;
+    const targetRecordId = activeRecordId;
+    inFlightRecordRef.current = targetRecordId;
+    void (async () => {
       try {
-        if (renderDesktopShareImage) {
-          const pngBytes = await renderDesktopShareImage(activeRecordId);
-          blob = new Blob([pngBytes], { type: 'image/png' });
-        } else {
-          blob = await historyApi.getShareImage(activeRecordId);
-        }
+        const loaded = renderDesktopShareImage
+          ? new Blob([await renderDesktopShareImage(targetRecordId)], { type: 'image/png' })
+          : await historyApi.getShareImage(targetRecordId);
+        if (loadTokenRef.current !== loadToken) return;
+        setImage({ recordId: targetRecordId, blob: loaded, previewUrl: URL.createObjectURL(loaded) });
       } catch (error) {
         if (loadTokenRef.current !== loadToken) return;
-        console.error('Generate share image failed:', error);
-        setState('error');
-        return;
+        setOpenRecordId(null);
+        reportFailure(text.shareImageLoadFailed, error);
+      } finally {
+        if (loadTokenRef.current === loadToken) inFlightRecordRef.current = null;
       }
-      if (loadTokenRef.current !== loadToken) return;
-      cachedImageRef.current = { recordId: activeRecordId, blob };
-      generatedNow = true;
-    }
+    })();
+  }, [activeRecordId, currentImage, renderDesktopShareImage, reportFailure, text.shareImageLoadFailed]);
 
-    const filename = `${safeFilenamePart(reportTitle)}-${activeRecordId}.png`;
-    const file = new File([blob], filename, { type: 'image/png' });
-    const canShareFile = typeof navigator.share === 'function'
-      && typeof navigator.canShare === 'function'
-      && navigator.canShare({ files: [file] });
+  const imageType = blob?.type || 'image/png';
+  const filename = activeRecordId === undefined
+    ? ''
+    : `${safeFilenamePart(reportTitle)}-${activeRecordId}.${extensionForImageType(imageType)}`;
+  const file = useMemo(
+    () => (blob && filename ? new File([blob], filename, { type: imageType }) : null),
+    [blob, filename, imageType],
+  );
+  const canCopy = Boolean(blob) && supportsImageClipboard();
+  const canShare = supportsFileShare(file);
 
-    // A file cannot be shared before it exists, while navigator.share() must run
-    // inside a transient user-activation event. Prepare on the first click and
-    // let the next click invoke native sharing synchronously.
-    if (generatedNow && canShareFile) {
-      setState('ready');
-      return;
-    }
-
-    setState('loading');
+  const handleDownload = useCallback(() => {
+    if (!blob) return;
     try {
-      if (canShareFile) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: reportTitle,
-          });
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            setState('ready');
-            return;
-          }
-          console.warn('Native file sharing failed; falling back to download:', error);
-          downloadBlob(blob, filename);
-        }
-      } else {
-        downloadBlob(blob, filename);
-      }
-
-      setState('success');
-      scheduleReset();
+      downloadBlob(blob, filename);
     } catch (error) {
-      console.error('Generate share image failed:', error);
-      setState('error');
+      reportFailure(text.shareImageDownloadFailed, error);
     }
-  }, [activeRecordId, clearResetTimer, renderDesktopShareImage, reportTitle, scheduleReset, setState, state]);
+  }, [blob, filename, reportFailure, text.shareImageDownloadFailed]);
+
+  const handleCopy = useCallback(() => {
+    if (!blob) return;
+    try {
+      // 必须在点击事件内同步调用 clipboard.write，才能使用本次点击的用户激活
+      const item = new ClipboardItem({ 'image/png': toPngBlob(blob) });
+      navigator.clipboard.write([item]).then(
+        () => showToast({ variant: 'success', title: text.shareImageCopied }),
+        (error: unknown) => reportFailure(text.shareImageCopyFailed, error),
+      );
+    } catch (error) {
+      reportFailure(text.shareImageCopyFailed, error);
+    }
+  }, [blob, reportFailure, showToast, text.shareImageCopied, text.shareImageCopyFailed]);
+
+  const handleSystemShare = useCallback(() => {
+    if (!file) return;
+    try {
+      // 同步调用 navigator.share，使用弹窗内本次点击的用户激活
+      navigator.share({ files: [file], title: reportTitle }).catch((error: unknown) => {
+        if (errorName(error) === 'AbortError') return; // 用户主动取消，不提示
+        reportFailure(text.shareImageShareFailed, error);
+      });
+    } catch (error) {
+      reportFailure(text.shareImageShareFailed, error);
+    }
+  }, [file, reportFailure, reportTitle, text.shareImageShareFailed]);
 
   if (activeRecordId === undefined) return null;
 
-  const tooltipText = state === 'loading'
-    ? text.generatingShareImage
-    : state === 'ready'
-      ? text.shareImageReadyToShare
-    : state === 'success'
-      ? text.shareImageReady
-      : state === 'error'
-        ? text.shareImageFailed
-        : text.generateShareImage;
+  const actionButtonClass = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60';
+
+  const dialog = isOpen ? (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={closeDialog}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="flex max-h-[calc(100vh-32px)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border/70 bg-elevated shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+          <h3 id={titleId} className="min-w-0 truncate text-base font-medium text-foreground">
+            {text.shareImageDialogTitle}
+          </h3>
+          <button
+            type="button"
+            onClick={closeDialog}
+            className="rounded-md p-1 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
+            aria-label={text.closeShareImageDialog}
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-base/40 p-4">
+          {isLoading || !previewUrl ? (
+            <div role="status" className="flex h-48 flex-col items-center justify-center gap-3 text-sm text-secondary-text">
+              <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+              <span>{text.generatingShareImage}</span>
+            </div>
+          ) : (
+            <img
+              src={previewUrl}
+              alt={text.shareImagePreviewAlt}
+              className="mx-auto block w-full rounded-lg border border-border/50"
+            />
+          )}
+        </div>
+
+        {blob ? (
+          <div className="flex flex-wrap justify-end gap-2 border-t border-border/60 px-4 py-3">
+            <button
+              type="button"
+              onClick={handleDownload}
+              className={`${actionButtonClass} border border-border/70 text-secondary-text hover:bg-hover hover:text-foreground`}
+            >
+              <Download className="h-4 w-4" aria-hidden="true" />
+              {text.downloadShareImage}
+            </button>
+            {canCopy ? (
+              <button
+                type="button"
+                onClick={handleCopy}
+                className={`${actionButtonClass} border border-border/70 text-secondary-text hover:bg-hover hover:text-foreground`}
+              >
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                {text.copyShareImage}
+              </button>
+            ) : null}
+            {canShare ? (
+              <button
+                type="button"
+                onClick={handleSystemShare}
+                className={`${actionButtonClass} bg-cyan/80 text-foreground shadow-lg shadow-cyan/20 hover:bg-cyan`}
+              >
+                <Share2 className="h-4 w-4" aria-hidden="true" />
+                {text.systemShareImage}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  const toastNode = toast ? (
+    <ToastViewport className="z-[80]">
+      <InlineAlert
+        variant={toast.variant}
+        title={toast.title}
+        message={toast.message ?? ''}
+        className="pointer-events-auto bg-card/95 backdrop-blur-sm"
+      />
+    </ToastViewport>
+  ) : null;
 
   return (
-    <Tooltip content={tooltipText}>
-      <span className="inline-flex shrink-0">
-        <button
-          type="button"
-          onClick={() => void handleShare()}
-          disabled={state === 'loading'}
-          className={`home-surface-button flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-secondary-text hover:text-foreground disabled:opacity-50 ${className}`}
-          aria-label={tooltipText}
-        >
-          {state === 'loading' ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : null}
-          {state === 'success' ? <Check className="h-5 w-5 text-success" aria-hidden="true" /> : null}
-          {state === 'error' ? <TriangleAlert className="h-5 w-5 text-danger" aria-hidden="true" /> : null}
-          {state === 'idle' || state === 'ready' ? <Share2 className="h-5 w-5" aria-hidden="true" /> : null}
-          <span>{tooltipText}</span>
-        </button>
-      </span>
-    </Tooltip>
+    <>
+      <Tooltip content={text.generateShareImage}>
+        <span className="inline-flex shrink-0">
+          <button
+            type="button"
+            onClick={handleOpen}
+            className={`home-surface-button flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-secondary-text hover:text-foreground disabled:opacity-50 ${className}`}
+            aria-label={text.generateShareImage}
+            aria-haspopup="dialog"
+          >
+            <Share2 className="h-5 w-5" aria-hidden="true" />
+            <span>{text.generateShareImage}</span>
+          </button>
+        </span>
+      </Tooltip>
+      {typeof document !== 'undefined' && dialog ? createPortal(dialog, document.body) : null}
+      {typeof document !== 'undefined' && toastNode ? createPortal(toastNode, document.body) : null}
+    </>
   );
 };

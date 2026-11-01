@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 
+import io
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
+from PIL import Image
 from fastapi import HTTPException
 
 from api.v1.endpoints import history as history_endpoint
@@ -35,7 +38,81 @@ def _patch_service(monkeypatch, result, markdown="# 中钨高新 000657 分析�
     return service
 
 
-def test_history_share_image_returns_png_with_stock_payload(monkeypatch):
+def _report_like_png(width=1080, height=3000, seed=0) -> bytes:
+    """生成带低幅噪点、浅色背景的长图，近似真实报告长图（大面积浅底 + 细节），PNG 体积较大。"""
+    rng = np.random.default_rng(seed)
+    array = (200 + rng.integers(0, 40, (height, width, 3))).astype(np.uint8)
+    buffer = io.BytesIO()
+    Image.fromarray(array).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_history_share_image_returns_compressed_jpeg(monkeypatch):
+    raw_result = {"code": "000657", "name": "中钨高新", "dashboard": {}}
+    _patch_service(
+        monkeypatch,
+        {
+            "id": 17,
+            "report_type": "detailed",
+            "raw_result": raw_result,
+            "context_snapshot": {},
+        },
+    )
+    png_bytes = _report_like_png()
+    monkeypatch.setattr(history_endpoint, "markdown_to_image", lambda *_a, **_k: png_bytes)
+
+    response = history_endpoint.get_history_share_image("17", db_manager=object())
+
+    assert response.status_code == 200
+    assert response.media_type == "image/jpeg"
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-17.jpg"'
+    assert response.headers["cache-control"] == "no-store"
+    assert response.body[:3] == b"\xff\xd8\xff"
+    # 体积明显小于原始 PNG
+    assert len(response.body) < len(png_bytes) / 2
+    with Image.open(io.BytesIO(response.body)) as image:
+        assert image.format == "JPEG"
+        assert image.mode == "RGB"
+        assert image.size == (1080, 3000)
+
+
+def test_history_share_image_flattens_transparent_png_to_jpeg(monkeypatch):
+    _patch_service(
+        monkeypatch,
+        {"id": 22, "report_type": "detailed", "raw_result": {}, "context_snapshot": {}},
+    )
+    buffer = io.BytesIO()
+    Image.new("RGBA", (1080, 400), (0, 0, 0, 0)).save(buffer, format="PNG")
+    monkeypatch.setattr(history_endpoint, "markdown_to_image", lambda *_a, **_k: buffer.getvalue())
+
+    response = history_endpoint.get_history_share_image("22", db_manager=object())
+
+    assert response.media_type == "image/jpeg"
+    with Image.open(io.BytesIO(response.body)) as image:
+        assert image.mode == "RGB"
+        # 透明区域铺白底，而不是变黑
+        assert image.getpixel((10, 10))[0] > 240
+
+
+def test_history_share_image_keeps_png_when_jpeg_conversion_unavailable(monkeypatch):
+    _patch_service(
+        monkeypatch,
+        {"id": 23, "report_type": "detailed", "raw_result": {}, "context_snapshot": {}},
+    )
+    png_bytes = _report_like_png(height=200)
+    monkeypatch.setattr(history_endpoint, "markdown_to_image", lambda *_a, **_k: png_bytes)
+    # 模拟高度超过 JPEG 单边上限等无法转 JPEG 的情况
+    monkeypatch.setattr(history_endpoint, "compress_image_to_jpeg", lambda *_a, **_k: None)
+
+    response = history_endpoint.get_history_share_image("23", db_manager=object())
+
+    assert response.media_type == "image/png"
+    assert response.body == png_bytes
+    assert response.headers["content-disposition"] == 'attachment; filename="dsa-report-23.png"'
+
+
+def test_history_share_image_falls_back_to_png_for_undecodable_bytes(monkeypatch):
     raw_result = {"code": "000657", "name": "中钨高新", "dashboard": {}}
     _patch_service(
         monkeypatch,
@@ -173,3 +250,13 @@ def test_history_share_image_returns_not_found(monkeypatch):
         history_endpoint.get_history_share_image("missing", db_manager=object())
 
     assert exc_info.value.status_code == 404
+
+
+def test_compress_image_to_jpeg_returns_none_when_not_convertible():
+    from src.utils import image_compress
+
+    png_bytes = _report_like_png(height=300)
+    with Image.open(io.BytesIO(png_bytes)) as image:
+        assert image_compress.encode_jpeg(image.convert("RGB"), 85, max_dimension=200) is None
+    assert image_compress.compress_image_to_jpeg(b"") is None
+    assert image_compress.compress_image_to_jpeg(b"not an image") is None

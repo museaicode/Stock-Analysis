@@ -37,9 +37,21 @@ SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 
 ## Web 一键分享
 
-浏览器版历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。页面加载报告时不会生成图片；只有用户点击“分享”后，页面才调用 `GET /api/v1/history/{record_id}/share-image` 按需生成或读取缓存 PNG。支持文件分享的浏览器会在图片准备好后提示“再次点击分享”，由第二次点击同步打开系统分享面板，避免异步生成过程使浏览器的用户激活状态失效；其他浏览器会在首次生成完成后直接下载 PNG。如果系统分享面板打开失败，除用户主动取消外也会自动回退下载已经生成的 PNG。
+浏览器版历史个股报告、市场复盘和完整报告抽屉右上角都会显示“分享”按钮。页面加载报告时不会生成图片；只有用户点击“分享”后，页面才调用 `GET /api/v1/history/{record_id}/share-image` 按需生成图片。
 
-Electron 桌面端同样展示“分享”按钮，但不依赖额外分发 `wkhtmltoimage`、`markdown-to-file` 或 Playwright。用户点击后，桌面 preload 通过受限 IPC 让主进程打开本地 `GET /api/v1/history/{record_id}/share-image-html`，使用 Electron 自带的隐藏 Chromium 窗口按完整页面高度截图为 PNG，随后走与浏览器一致的下载回退。IPC 只接受正整数记录 ID，主进程只允许当前桌面窗口请求本次启动时确定的后端 origin（包括显式配置的局域网 `WEBUI_HOST`），HTML 响应使用 CSP 禁止脚本、外部资源和网络加载。
+交互分两步，避免异步生成图片导致浏览器的“临时用户激活”过期：
+
+1. 点击“分享”后立即打开预览弹窗，显示“正在生成分享图...”加载状态；图片返回后在弹窗内展示预览。同一记录再次打开弹窗会复用已生成的图片。
+2. 弹窗底部按浏览器能力显示操作按钮，复制与系统分享都由弹窗内的这一次新点击同步触发：
+   - “下载图片”：始终显示，文件名为 `<报告标题>-<记录 ID>.<扩展名>`，扩展名与实际图片格式一致（JPEG 为 `.jpg`）。
+   - “复制图片”：仅在 `navigator.clipboard.write` 与 `ClipboardItem` 均可用时显示。浏览器剪贴板普遍只接受 PNG，JPEG 图片会在写入时于浏览器内转为 PNG（以 Promise 形式交给 `ClipboardItem`，不影响用户激活）；超长图片在部分移动端浏览器上可能因 Canvas 尺寸限制而复制失败，此时会提示失败，可改用下载。
+   - “系统分享”：仅在 `navigator.canShare({ files })` 返回 true 时显示，调用 `navigator.share` 打开系统分享面板。
+
+图片生成接口失败、下载 / 复制 / 系统分享失败（包括浏览器拒绝操作的 `NotAllowedError`）都会在页面右下角显示提示；接口失败时会关闭弹窗并展示服务端返回的原因（例如转图工具不可用），可直接再次点击“分享”重试。用户在系统分享面板中主动取消（`AbortError`）不提示。
+
+`share-image` 接口默认返回压缩后的 JPEG（quality 85，`Content-Type: image/jpeg`，下载文件名 `dsa-report-<id>.jpg`）。默认 `wkhtmltoimage` 引擎输出的完整报告长图 PNG 常达数 MB 至数十 MB（1080px 宽），转 JPEG 后体积大幅下降（本地 1080×7095 样例：PNG 30.7MB → JPEG 0.66MB），明显缩短首次打开弹窗的等待时间；Playwright 引擎输出的 PNG 本身压缩率较高，转 JPEG 收益较小（同类样例约减少 28%）。压缩复用企业微信长图使用的 Pillow 公共函数（`src/utils/image_compress.py`），带透明通道时铺白底；若未安装 Pillow、图片无法解码或高度超过 JPEG 单边上限（65500px），接口回退为原始 PNG，此时 `Content-Type` 为 `image/png`、扩展名为 `.png`，前端按实际格式处理。
+
+Electron 桌面端同样展示“分享”按钮，但不依赖额外分发 `wkhtmltoimage`、`markdown-to-file` 或 Playwright。用户点击后，桌面 preload 通过受限 IPC 让主进程打开本地 `GET /api/v1/history/{record_id}/share-image-html`，使用 Electron 自带的隐藏 Chromium 窗口按完整页面高度截图为 PNG，随后打开与浏览器一致的预览弹窗（桌面端图片保持 PNG）。IPC 只接受正整数记录 ID，主进程只允许当前桌面窗口请求本次启动时确定的后端 origin（包括显式配置的局域网 `WEBUI_HOST`），HTML 响应使用 CSP 禁止脚本、外部资源和网络加载。
 
 Web 手工生成不受 `MARKDOWN_TO_IMAGE_CHANNELS` 限制，但服务端仍需配置可用的 `MD2IMG_ENGINE`。桌面端手工生成复用 Electron，不读取 `MD2IMG_ENGINE`。Web 使用 Playwright 时先执行：
 

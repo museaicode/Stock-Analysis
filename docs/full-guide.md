@@ -1719,7 +1719,7 @@ FastAPI 提供 RESTful API 服务，支持配置管理和触发分析。
 | `/api/v1/screening/screen/tasks` | POST | 后台提交选股任务（需先开启 `SCREENING_ENABLED`） |
 | `/api/v1/screening/screen/tasks/{task_id}` | GET | 查询选股任务状态与完成结果 |
 | `/api/v1/history` | GET | 查询分析历史 |
-| `/api/v1/history/{record_id}/share-image` | GET | 生成浏览器版历史报告 PNG 分享图，需要可用的 `MD2IMG_ENGINE` |
+| `/api/v1/history/{record_id}/share-image` | GET | 生成浏览器版历史报告分享图，默认返回压缩后的 JPEG（无法转 JPEG 时回退 PNG），需要可用的 `MD2IMG_ENGINE` |
 | `/api/v1/history/{record_id}/share-image-html` | GET | 生成供 Electron 桌面端内置 Chromium 截图的受限分享图 HTML |
 | `/api/v1/history/{record_id}/diagnostics` | GET | 查询历史报告运行诊断摘要与脱敏复制文本 |
 | `/api/v1/history/{record_id}/flow` | GET | 查询历史报告运行流快照，普通个股和 `MARKET/market_review` 大盘复盘复用同一契约 |
