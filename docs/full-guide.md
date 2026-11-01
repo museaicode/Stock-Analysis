@@ -139,6 +139,7 @@ daily_stock_analysis/
 | `NOTIFICATION_MIN_SEVERITY` | 最低通知级别：`info`、`warning`、`error`、`critical`；留空保持现状 | 可选 |
 | `NOTIFICATION_DAILY_DIGEST_ENABLED` | 每日摘要预留开关；当前不会发送摘要或持久化摘要内容 | 可选 |
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | 超过此长度不转图片，避免超大图片（默认 15000） | 可选 |
+| `MARKDOWN_TO_IMAGE_LAYOUT` | 推送图版式：`card`（默认，决策卡，只提炼结论/点位/技术/风险/持仓）或 `full`（完整报告正文长图，保留品牌页眉、风险提示和已配置的底部品牌信息）；只影响通知推送图，Web 分享按钮始终为决策卡；非法值回退 `card` | 可选 |
 | `MD2IMG_ENGINE` | 转图引擎：`wkhtmltoimage`（默认）、`markdown-to-file` 或 `playwright`（需安装 Web 依赖与 Chromium） | 可选 |
 | `SHARE_IMAGE_REPO_URL` | 分享图 / 推送图底部显示的项目地址（`http(s)://`）；默认为空，留空不显示任何地址及标签 | 可选 |
 | `SHARE_IMAGE_XIAOHONGSHU_URL` | 分享图小红书主页 URL；留空不加链接 | 可选 |
@@ -1381,6 +1382,8 @@ PUSHOVER_API_TOKEN=your_api_token
 4. **Playwright**（可选，适合 Web 服务）：在 `apps/dsa-web` 执行 `npm ci` 和 `npx playwright install chromium`，并设置 `MD2IMG_ENGINE=playwright`
 
 未安装或安装失败时，将自动回退为 Markdown 文本发送。
+
+**推送图版式**：`MARKDOWN_TO_IMAGE_LAYOUT=card`（默认）生成决策卡，`full` 把完整报告全文渲染为长图（单股、多股汇总、大盘复盘均适用；企业微信汇总推送的图片同样改用完整报告，文本回退仍为企业微信精简版）。完整正文超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时仍跳过转图、回退文本。Web / 桌面端“分享”按钮不受该配置影响。
 
 企业微信机器人单张图片上限约 2MB；超限长图会先转 JPEG，仍超限则保持原宽度竖向切分（最多 6 张），超过 6 张或发送失败时回退为文本，详见 [通知渠道说明](notifications.md#企业微信图片大小限制)。
 

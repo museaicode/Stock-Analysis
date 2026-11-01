@@ -22,8 +22,10 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from src.share_image import (
+    SHARE_IMAGE_LAYOUT_CARD,
     ShareImageBranding,
     build_share_image_html,
+    normalize_share_image_layout,
     share_image_branding_from_config,
 )
 
@@ -52,6 +54,7 @@ def _markdown_to_image_playwright(
     markdown_text: str,
     structured_payload: Optional[Mapping[str, Any]] = None,
     branding: Optional[ShareImageBranding] = None,
+    layout: str = SHARE_IMAGE_LAYOUT_CARD,
 ) -> Optional[bytes]:
     """Convert a share-poster HTML document to PNG with Playwright Chromium."""
     playwright_command = _resolve_playwright_command()
@@ -71,6 +74,7 @@ def _markdown_to_image_playwright(
                 markdown_text,
                 structured_payload=structured_payload,
                 branding=branding,
+                layout=layout,
             ),
             encoding="utf-8",
         )
@@ -110,6 +114,7 @@ def _markdown_to_image_m2f(
     markdown_text: str,
     structured_payload: Optional[Mapping[str, Any]] = None,
     branding: Optional[ShareImageBranding] = None,
+    layout: str = SHARE_IMAGE_LAYOUT_CARD,
 ) -> Optional[bytes]:
     """Convert Markdown to PNG via markdown-to-file (m2f) CLI. Better emoji support (Issue #455)."""
     m2f_command = shutil.which("m2f")
@@ -132,6 +137,7 @@ def _markdown_to_image_m2f(
                     markdown_text,
                     structured_payload=structured_payload,
                     branding=branding,
+                    layout=layout,
                 )
             )
 
@@ -170,6 +176,7 @@ def _markdown_to_image_wkhtml(
     markdown_text: str,
     structured_payload: Optional[Mapping[str, Any]] = None,
     branding: Optional[ShareImageBranding] = None,
+    layout: str = SHARE_IMAGE_LAYOUT_CARD,
 ) -> Optional[bytes]:
     """Convert Markdown to PNG via imgkit/wkhtmltoimage."""
     try:
@@ -183,6 +190,7 @@ def _markdown_to_image_wkhtml(
             markdown_text,
             structured_payload=structured_payload,
             branding=branding,
+            layout=layout,
         )
         options = {
             "format": "png",
@@ -212,6 +220,7 @@ def markdown_to_image(
     markdown_text: str,
     max_chars: int = 15000,
     structured_payload: Optional[Mapping[str, Any]] = None,
+    layout: Optional[str] = None,
 ) -> Optional[bytes]:
     """
     Convert Markdown to PNG image bytes.
@@ -228,6 +237,11 @@ def markdown_to_image(
             (avoids huge images). Default 15000.
         structured_payload: Optional stock-analysis or market-review JSON. Exact
             structured fields take precedence over Markdown extraction.
+        layout: ``card`` (decision card) or ``full`` (complete report body).
+            ``None`` reads ``config.markdown_to_image_layout`` (default ``card``),
+            which is meant for push notifications. Callers that must keep the
+            decision card regardless of deployment config (e.g. the Web share
+            button) pass ``"card"`` explicitly.
 
     Returns:
         PNG bytes, or None if conversion fails or dependencies unavailable.
@@ -246,12 +260,18 @@ def markdown_to_image(
         config = get_config()
         engine = getattr(config, "md2img_engine", "wkhtmltoimage")
         branding = _share_image_branding(config)
+        configured_layout = getattr(config, "markdown_to_image_layout", SHARE_IMAGE_LAYOUT_CARD)
     except Exception:
         engine = "wkhtmltoimage"
         branding = share_image_branding_from_config(object())
+        configured_layout = SHARE_IMAGE_LAYOUT_CARD
+
+    resolved_layout = normalize_share_image_layout(
+        configured_layout if layout is None else layout
+    )
 
     if engine == "markdown-to-file":
-        return _markdown_to_image_m2f(markdown_text, structured_payload, branding)
+        return _markdown_to_image_m2f(markdown_text, structured_payload, branding, resolved_layout)
     if engine == "playwright":
-        return _markdown_to_image_playwright(markdown_text, structured_payload, branding)
-    return _markdown_to_image_wkhtml(markdown_text, structured_payload, branding)
+        return _markdown_to_image_playwright(markdown_text, structured_payload, branding, resolved_layout)
+    return _markdown_to_image_wkhtml(markdown_text, structured_payload, branding, resolved_layout)

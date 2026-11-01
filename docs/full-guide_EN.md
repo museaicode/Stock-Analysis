@@ -127,6 +127,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `SAVE_CONTEXT_SNAPSHOT` | Whether to persist analysis-history `context_snapshot`; defaults to `true`. Set to `false` or use `--no-context-snapshot` to stop persisting the full snapshot | Optional |
 | `MARKDOWN_TO_IMAGE_CHANNELS` | Notification channels that receive report images: telegram,wechat,custom,email,slack | Optional |
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | Skip image conversion above this Markdown length (default 15000) | Optional |
+| `MARKDOWN_TO_IMAGE_LAYOUT` | Push image layout: `card` (default, condensed decision card: thesis, levels, technicals, risks, positions) or `full` (the complete report body as a long image, keeping the brand header, risk disclaimer, and configured footer branding). Affects notification images only; the Web share button always uses the decision card. Invalid values fall back to `card` | Optional |
 | `MD2IMG_ENGINE` | Image renderer: `wkhtmltoimage` (default), `markdown-to-file`, or `playwright`. Debian/Ubuntu deployments using `wkhtmltoimage` should install both `wkhtmltopdf` and `fonts-noto-cjk` so supported Chinese and Korean report text renders correctly | Optional |
 | `SHARE_IMAGE_REPO_URL` | Project URL (`http(s)://`) shown in the share/notification image footer; empty by default, and when empty no URL or label is shown | Optional |
 | `SHARE_IMAGE_XIAOHONGSHU_URL` | Xiaohongshu profile URL shown in share images; empty disables the link | Optional |

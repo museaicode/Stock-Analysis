@@ -58,7 +58,7 @@ _POSTER_TEXT = {
     "zh": {
         "brand": "AI 股票分析", "stock_subtitle": "个股决策卡 · 结论、点位与风险一图读懂",
         "market_subtitle": "指数、宽度、主线与风险的收盘复盘", "multi_title": "多市场复盘",
-        "multi_subtitle": "按市场分段展示指数、主线与风险边界", "dashboard_subtitle": "多股决策摘要",
+        "multi_subtitle": "按市场分段展示指数、主线与风险边界", "dashboard_subtitle": "多股决策摘要", "full_subtitle": "完整分析报告",
         "score": "评分", "confidence": "置信度", "trend": "趋势", "core": "核心结论",
         "snapshot": "市场快照", "execution": "执行计划", "technical": "技术参考",
         "next_watch": "下一步观察", "positive_catalysts": "利好催化", "risk_alerts": "风险警报",
@@ -75,7 +75,7 @@ _POSTER_TEXT = {
     "en": {
         "brand": "AI Stock Analysis", "stock_subtitle": "Stock decision card · thesis, levels, and risks",
         "market_subtitle": "Closing review of indices, breadth, themes, and risks", "multi_title": "Multi-market Recap",
-        "multi_subtitle": "Indices, themes, and risk boundaries by market", "dashboard_subtitle": "Multi-stock Decision Summary",
+        "multi_subtitle": "Indices, themes, and risk boundaries by market", "dashboard_subtitle": "Multi-stock Decision Summary", "full_subtitle": "Full analysis report",
         "score": "Score", "confidence": "Confidence", "trend": "Trend", "core": "Core Conclusion",
         "snapshot": "Market Snapshot", "execution": "Execution Plan", "technical": "Technical Reference",
         "next_watch": "Next Watch", "positive_catalysts": "Positive Catalysts", "risk_alerts": "Risk Alerts",
@@ -92,7 +92,7 @@ _POSTER_TEXT = {
     "ko": {
         "brand": "AI 주식 분석", "stock_subtitle": "종목 의사결정 카드 · 결론, 가격대, 리스크",
         "market_subtitle": "지수, 시장 폭, 주도주와 리스크 마감 리뷰", "multi_title": "다중 시장 리뷰",
-        "multi_subtitle": "시장별 지수, 주도주와 리스크 경계", "dashboard_subtitle": "다중 종목 의사결정 요약",
+        "multi_subtitle": "시장별 지수, 주도주와 리스크 경계", "dashboard_subtitle": "다중 종목 의사결정 요약", "full_subtitle": "전체 분석 리포트",
         "score": "점수", "confidence": "신뢰도", "trend": "추세", "core": "핵심 결론",
         "snapshot": "시세 스냅샷", "execution": "실행 계획", "technical": "기술 참고",
         "next_watch": "다음 관찰", "positive_catalysts": "긍정 촉매", "risk_alerts": "리스크 경보",
@@ -152,6 +152,11 @@ _MARKET_LABEL_PATTERNS = (
     ("日股", re.compile(r"(?:日\s*股|japan|일본)", re.IGNORECASE)),
     ("韩股", re.compile(r"(?:韩\s*股|korea|한국)", re.IGNORECASE)),
 )
+
+
+SHARE_IMAGE_LAYOUT_CARD = "card"
+SHARE_IMAGE_LAYOUT_FULL = "full"
+SHARE_IMAGE_LAYOUTS = (SHARE_IMAGE_LAYOUT_CARD, SHARE_IMAGE_LAYOUT_FULL)
 
 
 @dataclass
@@ -2068,18 +2073,30 @@ def _footer(branding: ShareImageBranding, source_line: str, language: str) -> st
     """
 
 
+def normalize_share_image_layout(value: object) -> str:
+    """Normalize a layout value; unknown or empty values fall back to ``card``."""
+
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in SHARE_IMAGE_LAYOUTS else SHARE_IMAGE_LAYOUT_CARD
+
+
 def build_share_image_html(
     markdown_text: str,
     *,
     generated_on: Optional[date] = None,
     structured_payload: Optional[Mapping[str, Any]] = None,
     branding: Optional[ShareImageBranding] = None,
+    layout: str = SHARE_IMAGE_LAYOUT_CARD,
 ) -> str:
     """Build a deterministic 1080px stock, market, or dashboard share poster.
 
     Structured analysis JSON is preferred when available; stable Markdown remains
     the compatibility fallback. Unknown fields are omitted. Optional social
     branding is supplied by deployment config and never fetched at render time.
+
+    ``layout="card"`` (default) renders the condensed decision card for stock
+    and market reports. ``layout="full"`` keeps the same header, hero, footer
+    and disclaimer but renders the complete report Markdown as the body.
     """
 
     generated = generated_on or date.today()
@@ -2140,6 +2157,12 @@ def build_share_image_html(
         subtitle = _poster_text(language, "dashboard_subtitle")
         content = _generic_body(fallback_html)
 
+    if normalize_share_image_layout(layout) == SHARE_IMAGE_LAYOUT_FULL:
+        # Full layout: keep header/hero/footer, but render the whole report body
+        # instead of the structured decision-card extraction.
+        content = _generic_body(fallback_html)
+        subtitle = _poster_text(language, "full_subtitle")
+
     poster_branding = branding or ShareImageBranding()
 
     return f"""<!DOCTYPE html>
@@ -2189,7 +2212,11 @@ def build_share_image_html(
 __all__ = [
     "PROJECT_BRAND_NAME",
     "PROJECT_DISPLAY_NAME",
+    "SHARE_IMAGE_LAYOUT_CARD",
+    "SHARE_IMAGE_LAYOUT_FULL",
+    "SHARE_IMAGE_LAYOUTS",
     "ShareImageBranding",
     "build_share_image_html",
+    "normalize_share_image_layout",
     "share_image_branding_from_config",
 ]
