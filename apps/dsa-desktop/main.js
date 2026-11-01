@@ -14,6 +14,7 @@ let backendStartError = null;
 let desktopUpdateState = null;
 let lastNotifiedUpdateVersion = '';
 let lastPromptedInstallVersion = '';
+let lastPromptedDownloadVersion = '';
 let electronAutoUpdater = undefined;
 let electronAutoUpdaterConfigured = false;
 let electronUpdateCheckInFlight = false;
@@ -35,8 +36,11 @@ function resolveWindowBackgroundColor() {
 const isWindows = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 const appRootDev = path.resolve(__dirname, '..', '..');
-const GITHUB_OWNER = 'ZhuLinsen';
-const GITHUB_REPO = 'daily_stock_analysis';
+const GITHUB_OWNER = 'museaicode';
+const GITHUB_REPO = 'Stock-Analysis';
+// Set DSA_DESKTOP_UPDATE_CHECK=false (process env or the desktop .env file) to
+// disable every update check, including the startup check and manual checks.
+const DESKTOP_UPDATE_CHECK_ENV_KEY = 'DSA_DESKTOP_UPDATE_CHECK';
 const RELEASES_PAGE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
@@ -829,6 +833,25 @@ function readEnvFileValues(envFile, sourceEnv = process.env) {
 function readEnvFileValue(envFile, key, sourceEnv = process.env) {
   const values = readEnvFileValues(envFile, sourceEnv);
   return hasOwnValue(values, key) ? values[key] : null;
+}
+
+const FALSY_ENV_VALUES = new Set(['0', 'false', 'no', 'off']);
+
+function isDesktopUpdateCheckEnabled({ envFile = null, sourceEnv = process.env } = {}) {
+  let rawValue = hasOwnValue(sourceEnv, DESKTOP_UPDATE_CHECK_ENV_KEY)
+    ? sourceEnv[DESKTOP_UPDATE_CHECK_ENV_KEY]
+    : null;
+  if (rawValue === null && envFile) {
+    rawValue = readEnvFileValue(envFile, DESKTOP_UPDATE_CHECK_ENV_KEY, sourceEnv);
+  }
+  if (rawValue === null || rawValue === undefined) {
+    return true;
+  }
+  const normalized = String(rawValue).trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return !FALSY_ENV_VALUES.has(normalized);
 }
 
 function resolveBackendBindHost({
@@ -1694,13 +1717,66 @@ async function maybePromptInstallDownloadedUpdate(state) {
   }
 }
 
+async function maybePromptDownloadAvailableUpdate(state) {
+  if (!state || state.status !== UPDATE_STATUS.UPDATE_AVAILABLE || state.updateMode !== UPDATE_MODE.AUTO) {
+    return;
+  }
+  if (!state.latestVersion || state.latestVersion === lastPromptedDownloadVersion) {
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  lastPromptedDownloadVersion = state.latestVersion;
+  const currentVersion = state.currentVersion || resolveDesktopVersion() || '当前版本';
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    buttons: ['稍后', '下载更新'],
+    defaultId: 1,
+    cancelId: 0,
+    title: '发现新版本',
+    message: `检测到桌面端新版本 ${state.latestVersion}`,
+    detail: `当前版本 ${currentVersion}。确认后才会开始下载，下载完成后会再次询问是否重启安装。`,
+    noLink: true,
+  });
+
+  if (result.response !== 1) {
+    logLine(`[update] user postponed download latest=${state.latestVersion}`);
+    return;
+  }
+
+  const updater = getElectronAutoUpdater();
+  if (!updater || typeof updater.downloadUpdate !== 'function') {
+    return;
+  }
+  try {
+    logLine(`[update] user confirmed download latest=${state.latestVersion}`);
+    await updater.downloadUpdate();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logLine(`[update] download failed: ${message}`);
+    setDesktopUpdateState({
+      status: UPDATE_STATUS.ERROR,
+      updateMode: UPDATE_MODE.AUTO,
+      currentVersion: resolveDesktopVersion(),
+      latestVersion: state.latestVersion,
+      releaseUrl: state.releaseUrl || RELEASES_PAGE_URL,
+      checkedAt: new Date().toISOString(),
+      message: `下载更新失败：${message}`,
+    });
+  }
+}
+
 function configureElectronAutoUpdater() {
   const updater = getElectronAutoUpdater();
   if (!updater || electronAutoUpdaterConfigured) {
     return updater;
   }
 
-  updater.autoDownload = true;
+  // Never download in the background: the user confirms the download first
+  // (see maybePromptDownloadAvailableUpdate).
+  updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
   if (isWindows && app.isPackaged) {
     const installDirectory = path.dirname(app.getPath('exe'));
@@ -1722,10 +1798,11 @@ function configureElectronAutoUpdater() {
   updater.on('update-available', (info = {}) => {
     const latestVersion = resolveUpdaterLatestVersion(info) || '最新版本';
     const nextState = buildElectronUpdaterState(UPDATE_STATUS.UPDATE_AVAILABLE, info, {
-      message: `发现新版本 ${latestVersion}，正在后台下载更新...`,
+      message: `发现新版本 ${latestVersion}，确认后才会开始下载。`,
     });
     setDesktopUpdateState(nextState);
     logLine(`[update] auto update available latest=${nextState.latestVersion || 'unknown'}`);
+    void maybePromptDownloadAvailableUpdate(nextState);
   });
 
   updater.on('update-not-available', (info = {}) => {
@@ -1796,6 +1873,10 @@ async function performElectronUpdaterCheck({ manual = false } = {}) {
   }
 
   electronUpdateCheckInFlight = true;
+  if (manual) {
+    // A manual check re-offers the download prompt even if the user postponed it before.
+    lastPromptedDownloadVersion = '';
+  }
   setDesktopUpdateState({
     status: UPDATE_STATUS.CHECKING,
     updateMode: UPDATE_MODE.AUTO,
@@ -1822,7 +1903,26 @@ async function performElectronUpdaterCheck({ manual = false } = {}) {
   }
 }
 
+function resolveDesktopEnvFilePath() {
+  try {
+    return path.join(resolveAppDir(), '.env');
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function performDesktopUpdateCheck({ manual = false, notify = false } = {}) {
+  if (!isDesktopUpdateCheckEnabled({ envFile: resolveDesktopEnvFilePath() })) {
+    logLine(`[update] check skipped: ${DESKTOP_UPDATE_CHECK_ENV_KEY}=false`);
+    return setDesktopUpdateState({
+      status: manual ? UPDATE_STATUS.ERROR : UPDATE_STATUS.IDLE,
+      updateMode: UPDATE_MODE.MANUAL,
+      currentVersion: resolveDesktopVersion(),
+      checkedAt: new Date().toISOString(),
+      message: manual ? `更新检查已关闭（${DESKTOP_UPDATE_CHECK_ENV_KEY}=false）。` : '',
+    });
+  }
+
   if (canUseElectronAutoUpdater()) {
     return performElectronUpdaterCheck({ manual, notify });
   }
@@ -2119,6 +2219,8 @@ module.exports = {
   lockWindowTitle,
   GITHUB_OWNER,
   GITHUB_REPO,
+  DESKTOP_UPDATE_CHECK_ENV_KEY,
+  isDesktopUpdateCheckEnabled,
   LATEST_RELEASE_API_URL,
   RELEASES_PAGE_URL,
   DESKTOP_UPDATE_RUNTIME_RELATIVE_FILES,

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 新增可选配置 `SEARCH_PROVIDER_MARKETS`（默认空，不限制）：按 `provider:market[,market]`（`;` 分隔）把搜索服务分配到 cn/hk/us/jp/kr/tw/topic 市场，如 `anspire:cn,hk,topic;serpapi:us;brave:us`；未写入的服务参与所有市场，`SERPAPI_US_ONLY` 视为 `serpapi:us` 并与表合并（表中显式写 serpapi 时以表为准）；无效条目打 warning 后忽略，启动日志输出分配结果并提示无可用服务的市场。
 - [新功能] TickFlow 支持美股：美股日 K 路由调整为 Finnhub → TickFlow → AlphaVantage → YFinance → Longbridge（Longbridge 优先时为 Longbridge → Finnhub → TickFlow → …），TickFlow 始终紧跟 Finnhub、不受 `TICKFLOW_PRIORITY` 影响；美股成交量按股保留不做"手转股"，美股实时行情参与字段补充，无权限时 15 分钟内跳过；美股指数路由不变。
 - [改进] 分享图、推送消息与桌面客户端品牌文案更新为 MIUSIAI：分享图顶部品牌栏与底部品牌标题中的 "DSA" 改为 "MIUSIAI"；`EMAIL_SENDER_NAME` 未配置时默认发件人名称由 "daily_stock_analysis股票分析助手" 改为 "MIUSIAI股票分析助手"（已配置时仍以用户配置为准，GitHub Actions 默认值同步）；Web 设置页通知测试默认标题与内容改为 "MIUSIAI 通知测试" / "MIUSIAI notification test"；桌面端主窗口标题固定为 "MIUSIAI"、加载页与 Windows 卸载显示名改为 MIUSIAI。桌面端 `appId` / `productName` / 用户数据与安装目录、分享图底部 GitHub 仓库与小红书区域、环境变量、API 路径与内部标识均保持不变。
+- [改进] 桌面端更新源改为本仓库 `museaicode/Stock-Analysis`（`main.js` 与 `package.json` 的 publish 配置同步）；Windows 安装版检测到新版本后不再后台自动下载，改为弹窗提示、用户确认后才下载；新增 `DSA_DESKTOP_UPDATE_CHECK`（默认 `true`，设为 `false` 时完全不检查更新）。之后需通过本仓库 `desktop-release` 发布带 `latest.yml` 的 Release，否则更新检查找不到新版本，详见 `docs/desktop-package.md`。
 
 ## [3.33.0] - 2026-10-15
 

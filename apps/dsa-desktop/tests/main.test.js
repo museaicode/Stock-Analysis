@@ -689,7 +689,7 @@ test('extractReleaseMetadata ignores releases without semver tags', (t) => {
   assert.equal(
     mainModule.extractReleaseMetadata({
       tag_name: 'desktop-latest',
-      html_url: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/desktop-latest',
+      html_url: 'https://github.com/museaicode/Stock-Analysis/releases/tag/desktop-latest',
     }),
     null
   );
@@ -701,7 +701,7 @@ test('evaluateReleaseUpdate reports update-available when release is newer', (t)
     currentVersion: '3.12.0',
     release: {
       tag_name: 'v3.13.0',
-      html_url: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0',
+      html_url: 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0',
       published_at: '2026-04-25T01:00:00Z',
       name: 'v3.13.0',
     },
@@ -711,7 +711,7 @@ test('evaluateReleaseUpdate reports update-available when release is newer', (t)
   assert.equal(state.status, mainModule.UPDATE_STATUS.UPDATE_AVAILABLE);
   assert.equal(state.currentVersion, '3.12.0');
   assert.equal(state.latestVersion, '3.13.0');
-  assert.equal(state.releaseUrl, 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0');
+  assert.equal(state.releaseUrl, 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0');
   assert.equal(state.checkedAt, '2026-04-25T01:02:00Z');
   assert.equal(state.publishedAt, '2026-04-25T01:00:00Z');
   assert.match(state.message, /发现新版本 3\.13\.0/);
@@ -723,14 +723,14 @@ test('evaluateReleaseUpdate reports up-to-date when version is current', (t) => 
     currentVersion: '3.13.0',
     release: {
       tag_name: 'v3.13.0',
-      html_url: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0',
+      html_url: 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0',
     },
     checkedAt: '2026-04-25T01:02:00Z',
   });
 
   assert.equal(state.status, mainModule.UPDATE_STATUS.UP_TO_DATE);
   assert.equal(state.latestVersion, '3.13.0');
-  assert.equal(state.releaseUrl, 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0');
+  assert.equal(state.releaseUrl, 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0');
   assert.equal(state.checkedAt, '2026-04-25T01:02:00Z');
   assert.equal(state.publishedAt, '');
 });
@@ -741,7 +741,7 @@ test('evaluateReleaseUpdate reports error when current version is invalid', (t) 
     currentVersion: 'build-20260425',
     release: {
       tag_name: 'v3.13.0',
-      html_url: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0',
+      html_url: 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0',
     },
     checkedAt: '2026-04-25T01:02:00Z',
   });
@@ -1550,7 +1550,7 @@ test('manual desktop update check rejects overlapping in-flight requests', async
       status: mainModule.UPDATE_STATUS.UPDATE_AVAILABLE,
       currentVersion,
       latestVersion: '3.13.0',
-      releaseUrl: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0',
+      releaseUrl: 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0',
     };
   });
 
@@ -1569,7 +1569,7 @@ test('manual desktop update check rejects overlapping in-flight requests', async
     status: mainModule.UPDATE_STATUS.UPDATE_AVAILABLE,
     currentVersion: '3.12.0',
     latestVersion: '3.13.0',
-    releaseUrl: 'https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v3.13.0',
+    releaseUrl: 'https://github.com/museaicode/Stock-Analysis/releases/tag/v3.13.0',
   });
 
   const firstState = await firstCheck;
@@ -1693,4 +1693,142 @@ test('stopBackend uses taskkill on Windows and clears after backend exit', async
     },
   ]);
   assert.equal(mainModule.__getBackendProcessForTest(), null);
+});
+
+function createWindowsNsisLayout(prefix) {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const exeDir = path.join(tempRoot, 'app');
+  const userDataDir = path.join(tempRoot, 'userData');
+  fs.mkdirSync(exeDir, { recursive: true });
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.writeFileSync(path.join(exeDir, 'Uninstall Daily Stock Analysis.exe'), '');
+  return {
+    tempRoot,
+    exeDir,
+    userDataDir,
+    exePath: path.join(exeDir, 'Daily Stock Analysis.exe'),
+    envFile: path.join(exeDir, '.env'),
+  };
+}
+
+test('desktop update source points to this repository', (t) => {
+  const mainModule = loadMainModule(t);
+  assert.equal(mainModule.GITHUB_OWNER, 'museaicode');
+  assert.equal(mainModule.GITHUB_REPO, 'Stock-Analysis');
+  assert.equal(
+    mainModule.LATEST_RELEASE_API_URL,
+    'https://api.github.com/repos/museaicode/Stock-Analysis/releases/latest'
+  );
+  const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+  assert.deepEqual(packageJson.build.win.publish, [
+    { provider: 'github', owner: 'museaicode', repo: 'Stock-Analysis' },
+  ]);
+});
+
+test('isDesktopUpdateCheckEnabled defaults to true and honours env and .env file', (t) => {
+  const mainModule = loadMainModule(t);
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsa-desktop-update-flag-'));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const envFile = path.join(tempRoot, '.env');
+
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ sourceEnv: {} }), true);
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ envFile, sourceEnv: {} }), true);
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ sourceEnv: { DSA_DESKTOP_UPDATE_CHECK: 'false' } }), false);
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ sourceEnv: { DSA_DESKTOP_UPDATE_CHECK: ' 0 ' } }), false);
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ sourceEnv: { DSA_DESKTOP_UPDATE_CHECK: 'true' } }), true);
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ sourceEnv: { DSA_DESKTOP_UPDATE_CHECK: '' } }), true);
+
+  fs.writeFileSync(envFile, 'DSA_DESKTOP_UPDATE_CHECK=false\n');
+  assert.equal(mainModule.isDesktopUpdateCheckEnabled({ envFile, sourceEnv: {} }), false);
+  // Process environment wins over the .env file.
+  assert.equal(
+    mainModule.isDesktopUpdateCheckEnabled({ envFile, sourceEnv: { DSA_DESKTOP_UPDATE_CHECK: 'true' } }),
+    true
+  );
+});
+
+test('auto updater does not download until the user confirms', async (t) => {
+  const layout = createWindowsNsisLayout('dsa desktop confirm download ');
+  t.after(() => fs.rmSync(layout.tempRoot, { recursive: true, force: true }));
+  const updaterEvents = {};
+  const dialogCalls = [];
+  let downloadCalls = 0;
+  let dialogResponse = 0;
+  const fakeUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: true,
+    on: (event, handler) => {
+      updaterEvents[event] = handler;
+    },
+    checkForUpdates: async () => {
+      updaterEvents['update-available']({ version: 'v3.13.0', releaseName: 'v3.13.0' });
+    },
+    downloadUpdate: async () => {
+      downloadCalls += 1;
+    },
+  };
+  const mainModule = loadMainModule(t, {
+    dialog: {
+      showMessageBox: async (_window, options) => {
+        dialogCalls.push(options);
+        return { response: dialogResponse };
+      },
+    },
+    electronUpdater: fakeUpdater,
+    platform: 'win32',
+    app: {
+      isPackaged: true,
+      getPath: (name) => (name === 'exe' ? layout.exePath : layout.userDataDir),
+    },
+  });
+  mainModule.__setMainWindowForTest({ isDestroyed: () => false, webContents: { send: () => undefined } });
+
+  await mainModule.__getIpcMainHandler('desktop:check-for-updates')();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(fakeUpdater.autoDownload, false);
+  assert.equal(fakeUpdater.autoInstallOnAppQuit, false);
+  assert.equal(dialogCalls.length, 1);
+  assert.equal(downloadCalls, 0, 'postponing must not start a download');
+  const state = await mainModule.__getIpcMainHandler('desktop:get-update-state')();
+  assert.equal(state.status, mainModule.UPDATE_STATUS.UPDATE_AVAILABLE);
+
+  dialogResponse = 1;
+  await mainModule.__getIpcMainHandler('desktop:check-for-updates')();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(dialogCalls.length, 2);
+  assert.equal(downloadCalls, 1);
+});
+
+test('DSA_DESKTOP_UPDATE_CHECK=false skips every update check', async (t) => {
+  const layout = createWindowsNsisLayout('dsa desktop update disabled ');
+  t.after(() => fs.rmSync(layout.tempRoot, { recursive: true, force: true }));
+  fs.writeFileSync(layout.envFile, 'DSA_DESKTOP_UPDATE_CHECK=false\n');
+  let updaterChecks = 0;
+  let releaseChecks = 0;
+  const mainModule = loadMainModule(t, {
+    electronUpdater: {
+      autoDownload: true,
+      on: () => undefined,
+      checkForUpdates: async () => {
+        updaterChecks += 1;
+      },
+    },
+    platform: 'win32',
+    app: {
+      isPackaged: true,
+      getPath: (name) => (name === 'exe' ? layout.exePath : layout.userDataDir),
+    },
+  });
+  mainModule.__setDesktopUpdateCheckerForTest(async () => {
+    releaseChecks += 1;
+    return {};
+  });
+  t.after(() => mainModule.__setDesktopUpdateCheckerForTest(null));
+
+  const state = await mainModule.__getIpcMainHandler('desktop:check-for-updates')();
+  assert.equal(updaterChecks, 0);
+  assert.equal(releaseChecks, 0);
+  assert.equal(state.status, mainModule.UPDATE_STATUS.ERROR);
+  assert.match(state.message, /DSA_DESKTOP_UPDATE_CHECK=false/);
 });
