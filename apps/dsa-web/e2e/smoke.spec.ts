@@ -194,7 +194,7 @@ test.describe('web smoke', () => {
 
     await expect(page.getByRole('heading', { name: 'System settings' })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('button', { name: 'Send test' })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue('DSA notification test');
+    await expect(page.getByRole('textbox', { name: 'Title' })).toHaveValue('MIUSIAI notification test');
 
     await captureSmokeScreenshot(page, testInfo, 'smoke-settings-page-en');
   });

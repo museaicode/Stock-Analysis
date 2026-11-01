@@ -9,6 +9,7 @@ import pytest
 from src.share_image import (
     DEFAULT_XIAOHONGSHU_HANDLE,
     DEFAULT_XIAOHONGSHU_QR_PATH,
+    PROJECT_BRAND_NAME,
     PROJECT_DISPLAY_NAME,
     PROJECT_REPOSITORY,
     ShareImageBranding,
@@ -45,6 +46,9 @@ def test_stock_share_image_uses_configured_xiaohongshu_branding():
     assert PROJECT_REPOSITORY in html
     assert "小红书二维码" in html
     assert PROJECT_DISPLAY_NAME in html
+    assert PROJECT_BRAND_NAME == "MIUSIAI"
+    assert html.count(f"<strong>{PROJECT_BRAND_NAME}</strong>") == 2
+    assert "<strong>DSA</strong>" not in html
     assert f"<b>小红书</b>{XIAOHONGSHU_HANDLE}" in html
     assert "123456" not in html
     assert 'href="https://example.com/xiaohongshu"' in html

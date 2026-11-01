@@ -48,6 +48,22 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     @patch.object(Config, "_parse_stock_email_groups", return_value=[])
+    def test_email_sender_name_defaults_to_brand_and_respects_user_value(
+        self, _mock_parse_stock_email_groups, _mock_parse_litellm_yaml, _mock_setup_env
+    ):
+        with patch.dict(os.environ, {}, clear=True):
+            default = Config._load_from_env()
+
+        self.assertEqual(default.email_sender_name, "MIUSIAI股票分析助手")
+
+        with patch.dict(os.environ, {"EMAIL_SENDER_NAME": "我的分析助手"}, clear=True):
+            configured = Config._load_from_env()
+
+        self.assertEqual(configured.email_sender_name, "我的分析助手")
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    @patch.object(Config, "_parse_stock_email_groups", return_value=[])
     def test_stock_list_accepts_common_copy_paste_separators(
         self, _mock_parse_stock_email_groups, _mock_parse_litellm_yaml, _mock_setup_env
     ):

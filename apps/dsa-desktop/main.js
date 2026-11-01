@@ -20,6 +20,14 @@ let electronUpdateCheckInFlight = false;
 let desktopUpdateCheckInFlight = false;
 let desktopBackendOrigin = '';
 
+// The initial title comes from the BrowserWindow `title` option; this only
+// blocks later page <title> changes from overriding it.
+function lockWindowTitle(win) {
+  win.on('page-title-updated', (event) => {
+    event.preventDefault();
+  });
+}
+
 function resolveWindowBackgroundColor() {
   return nativeTheme.shouldUseDarkColors ? '#08080c' : '#f4f7fb';
 }
@@ -33,6 +41,11 @@ const RELEASES_PAGE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/rel
 const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
 const DESKTOP_UPDATE_BACKUP_DIR = '.dsa-desktop-update-backup';
+// User-visible desktop brand. The native window title stays fixed to this value
+// instead of mirroring the Web page's document.title (which uses the Web brand).
+// productName / appId / userData are intentionally unchanged to keep install
+// paths, runtime data and auto-update continuity for existing users.
+const DESKTOP_WINDOW_TITLE = 'MIUSIAI';
 const DESKTOP_UPDATE_BACKUP_MANIFEST_FILE = 'runtime-state.json';
 const DESKTOP_BACKEND_DEFAULT_HOST = '127.0.0.1';
 const DESKTOP_SHARE_IMAGE_WIDTH = 1080;
@@ -1919,6 +1932,7 @@ async function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 640,
+    title: DESKTOP_WINDOW_TITLE,
     backgroundColor: resolveWindowBackgroundColor(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1928,6 +1942,7 @@ async function createWindow() {
     },
   });
   logStartup('BrowserWindow created');
+  lockWindowTitle(mainWindow);
 
   const loadingPath = path.join(__dirname, 'renderer', 'loading.html');
   const loadingPageStartedAt = Date.now();
@@ -2100,6 +2115,8 @@ app.on('before-quit', () => {
 
 module.exports = {
   DEFAULT_REQUEST_TIMEOUT_MS,
+  DESKTOP_WINDOW_TITLE,
+  lockWindowTitle,
   GITHUB_OWNER,
   GITHUB_REPO,
   LATEST_RELEASE_API_URL,

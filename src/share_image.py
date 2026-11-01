@@ -26,6 +26,8 @@ import markdown2
 PROJECT_URL = "https://github.com/ZhuLinsen/daily_stock_analysis"
 PROJECT_REPOSITORY = "ZhuLinsen/daily_stock_analysis"
 PROJECT_DISPLAY_NAME = "股票智能分析系统"
+# User-visible brand wordmark shown in the poster header and footer.
+PROJECT_BRAND_NAME = "MIUSIAI"
 DEFAULT_XIAOHONGSHU_QR_PATH = "src/assets/share_image/xiaohongshu_qr.jpg"
 DEFAULT_XIAOHONGSHU_HANDLE = "@霸天土小豆"
 _MARKET_RE = re.compile(
@@ -2029,7 +2031,7 @@ def _footer(branding: ShareImageBranding, source_line: str, language: str) -> st
     return f"""
     <footer class="poster-footer">
       <div class="{brand_class}">
-        <div class="footer-title"><strong>DSA</strong><span>{_escape(PROJECT_DISPLAY_NAME)}</span></div>
+        <div class="footer-title"><strong>{_escape(PROJECT_BRAND_NAME)}</strong><span>{_escape(PROJECT_DISPLAY_NAME)}</span></div>
         <small>{_escape(_poster_text(language, "tagline"))}</small>
         <div class="repo-line">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.64 5.47 7.71.4.08.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.02 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.45 7.45 0 0 1 8 3.91c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.12-1.87 3.81-3.65 4.02.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .22.15.47.55.39A8.15 8.15 0 0 0 16 8.13C16 3.64 12.42 0 8 0Z"/></svg>
@@ -2151,7 +2153,7 @@ def build_share_image_html(
 </head>
 <body>
   <main class="poster {report_kind}">
-    <header class="poster-header"><div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>DSA</strong><em>|</em> {_escape(_poster_text(language, "brand"))}</div><div class="meta"><span class="date-chip">{_escape(stamp)}</span></div></header>
+    <header class="poster-header"><div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>{_escape(PROJECT_BRAND_NAME)}</strong><em>|</em> {_escape(_poster_text(language, "brand"))}</div><div class="meta"><span class="date-chip">{_escape(stamp)}</span></div></header>
     <section class="hero"><h1>{_escape(title)}{f'<span class="code">{_escape(data.code)}</span>' if report_kind == 'stock' and data.code else ''}</h1><p>{_escape(subtitle)}</p></section>
     {content}
     {_footer(poster_branding, source_line, language)}
@@ -2164,6 +2166,7 @@ __all__ = [
     "DEFAULT_XIAOHONGSHU_HANDLE",
     "DEFAULT_XIAOHONGSHU_QR_PATH",
     "PROJECT_REPOSITORY",
+    "PROJECT_BRAND_NAME",
     "PROJECT_DISPLAY_NAME",
     "PROJECT_URL",
     "ShareImageBranding",

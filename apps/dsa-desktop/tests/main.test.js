@@ -38,6 +38,7 @@ function loadMainModule(t, options = {}) {
       isDestroyed: () => false,
       getAllWindows: () => [],
       setBackgroundColor: () => undefined,
+      on: () => undefined,
       once: () => undefined,
       webContents: {
         on: () => undefined,
@@ -123,6 +124,31 @@ test('compareVersions follows semantic version ordering', (t) => {
   assert.equal(mainModule.compareVersions('v3.13.0', '3.13.0'), 0);
   assert.equal(mainModule.compareVersions('3.13.0', '3.13.0-beta.1'), 1);
   assert.equal(mainModule.compareVersions('3.13.0-beta.2', '3.13.0-beta.10'), -1);
+});
+
+test('lockWindowTitle keeps the desktop brand instead of the web document title', (t) => {
+  const mainModule = loadMainModule(t);
+  const win = new EventEmitter();
+
+  mainModule.lockWindowTitle(win);
+
+  assert.equal(mainModule.DESKTOP_WINDOW_TITLE, 'MIUSIAI');
+  let prevented = false;
+  win.emit('page-title-updated', { preventDefault: () => { prevented = true; } }, '智能选股分析 - MIUSI');
+  assert.equal(prevented, true);
+});
+
+test('desktop package keeps install and data identity stable', () => {
+  const pkg = require('../package.json');
+  // Changing these would move userData / install directories and break auto-update.
+  assert.equal(pkg.build.appId, 'com.daily-stock-analysis.desktop');
+  assert.equal(pkg.build.productName, 'Daily Stock Analysis');
+});
+
+test('loading page shows the desktop brand', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'loading.html'), 'utf-8');
+  assert.match(html, /<title>MIUSIAI<\/title>/);
+  assert.doesNotMatch(html, /Daily Stock Analysis/);
 });
 
 test('buildMainPageUrl includes desktop version and cache buster', (t) => {
@@ -1341,6 +1367,8 @@ test('createWindow startup path does not throw ReferenceError after restore resu
   const uninstallPath = path.join(appDir, 'Uninstall Daily Stock Analysis.exe');
   const loadedFiles = [];
   const loadedUrls = [];
+  const windowOptions = [];
+  const windowEvents = [];
   let startupError;
   let updateCheckRequested = false;
   const originalResourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath');
@@ -1348,10 +1376,14 @@ test('createWindow startup path does not throw ReferenceError after restore resu
   const backupRoot = path.join(userDataDir, '.dsa-desktop-update-backup');
   const manifestPath = path.join(backupRoot, 'runtime-state.json');
 
-  function fakeBrowserWindow() {
+  function fakeBrowserWindow(options) {
+    windowOptions.push(options);
     return {
       isDestroyed: () => false,
       setBackgroundColor: () => undefined,
+      on: (eventName) => {
+        windowEvents.push(eventName);
+      },
       once: () => undefined,
       webContents: {
         on: () => undefined,
@@ -1486,6 +1518,8 @@ test('createWindow startup path does not throw ReferenceError after restore resu
   );
   assert.equal(updateCheckRequested, true);
   assert.equal(startupError, undefined);
+  assert.equal(windowOptions[0].title, 'MIUSIAI');
+  assert.equal(windowEvents.includes('page-title-updated'), true);
   assert.equal(fs.existsSync(backupRoot), false);
   const updateState = await mainModule.__getIpcMainHandler('desktop:get-update-state')();
   assert.notEqual(updateState.status, mainModule.UPDATE_STATUS.ERROR);

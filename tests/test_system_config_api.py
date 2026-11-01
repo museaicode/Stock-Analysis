@@ -862,7 +862,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
                 request=TestNotificationChannelRequest(
                     channel="wechat",
                     items=[{"key": "WECHAT_WEBHOOK_URL", "value": "https://example.com/hook"}],
-                    title="DSA 通知测试",
+                    title="MIUSIAI 通知测试",
                     content="hello",
                     timeout_seconds=5,
                 ),
@@ -892,7 +892,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
         ntfy_request = TestNotificationChannelRequest(
             channel="ntfy",
             items=[{"key": "NTFY_URL", "value": "https://ntfy.sh/dsa-topic"}],
-            title="DSA 通知测试",
+            title="MIUSIAI 通知测试",
             content="hello",
             timeout_seconds=5,
         )
@@ -902,7 +902,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
                 {"key": "GOTIFY_URL", "value": "https://gotify.example"},
                 {"key": "GOTIFY_TOKEN", "value": "app-token"},
             ],
-            title="DSA 通知测试",
+            title="MIUSIAI 通知测试",
             content="hello",
             timeout_seconds=5,
         )

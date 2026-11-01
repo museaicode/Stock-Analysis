@@ -73,7 +73,7 @@ Discord 长报告发送复用现有分片链路：单条 `content` 运行时不�
 | `EMAIL_SENDER` | minimal | email | Variable or Secret | - |
 | `EMAIL_PASSWORD` | minimal | email | Secret | - |
 | `EMAIL_RECEIVERS` | advanced | email | Variable or Secret | - |
-| `EMAIL_SENDER_NAME` | advanced | email | Variable or Secret | `daily_stock_analysis股票分析助手` |
+| `EMAIL_SENDER_NAME` | advanced | email | Variable or Secret | `MIUSIAI股票分析助手` |
 | `PUSHOVER_USER_KEY` | minimal | pushover | Secret | - |
 | `PUSHOVER_API_TOKEN` | minimal | pushover | Secret | - |
 | `NTFY_URL` | minimal | ntfy | Secret | - |
@@ -333,7 +333,7 @@ Secret 适合 token、password、webhook URL 等敏感项；Variable 适合 `WEC
 
 ## Desktop
 
-桌面端复用 Web 设置页的通知配置和单渠道测试入口。通知测试会发送真实测试消息，但只使用当前页面草稿值，不会自动保存；需要持久化时仍需点击保存配置。
+桌面端复用 Web 设置页的通知配置和单渠道测试入口。通知测试会发送真实测试消息（默认标题 `MIUSIAI 通知测试` / `MIUSIAI notification test`，可在发送前修改），但只使用当前页面草稿值，不会自动保存；需要持久化时仍需点击保存配置。
 
 桌面端可通过配置导出 / 导入恢复 `.env`。回滚某个通知渠道时，清空该渠道 minimal key 并保存即可；advanced key 留存不会单独启用渠道，但建议同步清理以减少后续排障噪音。
 
