@@ -53,6 +53,8 @@ _CN_MAIN_INDEX_QUOTES = (
     ("000300.SH", "000300", "\u6caa\u6df1300"),
 )
 _CN_UNIVERSE_ID = "CN_Equity_A"
+_CN_TIMEZONE = "Asia/Shanghai"
+_US_TIMEZONE = "America/New_York"
 _MAX_SYMBOLS_PER_QUOTE_REQUEST = 5
 _CAPABILITY_NEGATIVE_CACHE_TTL_SECONDS = 900
 _SECTOR_RANKINGS_CACHE_TTL_SECONDS = 300
@@ -185,13 +187,14 @@ class TickFlowFetcher(BaseFetcher):
             raise DataFetchError("TickFlow API key is not configured")
 
         request_count = self._daily_kline_count(start_date, end_date)
+        tz_name = self._market_timezone_name(symbol)
         try:
             df = client.klines.get(
                 symbol,
                 period="1d",
                 count=request_count,
-                start_time=self._date_to_ms(start_date),
-                end_time=self._date_to_ms(end_date, end_of_day=True),
+                start_time=self._date_to_ms(start_date, tz_name=tz_name),
+                end_time=self._date_to_ms(end_date, end_of_day=True, tz_name=tz_name),
                 adjust=self.kline_adjust,
                 as_dataframe=True,
             )
@@ -216,7 +219,10 @@ class TickFlowFetcher(BaseFetcher):
             return pd.DataFrame(columns=["code", *STANDARD_COLUMNS])
 
         normalized = pd.DataFrame()
-        normalized["date"] = self._extract_date_series(raw)
+        tz_name = _US_TIMEZONE if (
+            self._to_tickflow_symbol(stock_code) is None and self._to_tickflow_us_symbol(stock_code)
+        ) else _CN_TIMEZONE
+        normalized["date"] = self._extract_date_series(raw, tz_name=tz_name)
         normalized["code"] = normalize_stock_code(stock_code)
         for column in ("open", "high", "low", "close", "amount"):
             normalized[column] = pd.to_numeric(raw.get(column), errors="coerce")
@@ -431,28 +437,77 @@ class TickFlowFetcher(BaseFetcher):
     def _is_us_symbol(symbol: str) -> bool:
         return str(symbol or "").strip().upper().endswith(".US")
 
+    @classmethod
+    def _market_timezone_name(cls, symbol: str) -> str:
+        """Exchange-local timezone used for daily-bar date boundaries."""
+        return _US_TIMEZONE if cls._is_us_symbol(symbol) else _CN_TIMEZONE
+
     @staticmethod
-    def _date_to_ms(date_str: str, *, end_of_day: bool = False) -> int:
+    def _resolve_tzinfo(tz_name: str):
+        if ZoneInfo is not None:
+            try:
+                return ZoneInfo(tz_name)
+            except Exception:
+                pass
+        # Fixed-offset fallback only when tzdata is unavailable.
+        offset_hours = -5 if tz_name == _US_TIMEZONE else 8
+        return timezone(timedelta(hours=offset_hours))
+
+    @classmethod
+    def _date_to_ms(
+        cls,
+        date_str: str,
+        *,
+        end_of_day: bool = False,
+        tz_name: str = _CN_TIMEZONE,
+    ) -> int:
+        """Convert a market-local calendar date to an epoch-ms boundary.
+
+        US symbols must pass ``tz_name=America/New_York`` so that the request
+        window follows the US trading day rather than the Beijing calendar.
+        """
         dt = datetime.strptime(date_str, "%Y-%m-%d")
         if end_of_day:
             dt = dt + timedelta(days=1) - timedelta(milliseconds=1)
-        if ZoneInfo is not None:
-            dt = dt.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
-        else:
-            dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        dt = dt.replace(tzinfo=cls._resolve_tzinfo(tz_name))
         return int(dt.timestamp() * 1000)
 
     @staticmethod
-    def _extract_date_series(raw: pd.DataFrame) -> pd.Series:
-        if "date" in raw.columns:
-            return pd.to_datetime(raw["date"], errors="coerce").dt.normalize()
-        if "trade_date" in raw.columns:
-            return pd.to_datetime(raw["trade_date"], errors="coerce").dt.normalize()
+    def _parse_date_column(values: pd.Series) -> pd.Series:
+        parsed = pd.to_datetime(values, errors="coerce")
+        if getattr(parsed.dt, "tz", None) is not None:
+            parsed = parsed.dt.tz_localize(None)
+        return parsed.dt.normalize()
+
+    @classmethod
+    def _extract_date_series(
+        cls,
+        raw: pd.DataFrame,
+        tz_name: str = _CN_TIMEZONE,
+    ) -> pd.Series:
+        """Resolve each bar's exchange-local trade date.
+
+        Priority: ``trade_date`` (already exchange-local, provided by the SDK)
+        -> ``date`` -> epoch-ms ``timestamp``/``time``/``ts`` converted in the
+        market timezone (America/New_York for US, Asia/Shanghai for A-shares).
+        A US bar stamped 16:00 ET is 04:00 Beijing on the next day, so
+        converting in the wrong timezone would shift it to the next date.
+        """
+        result = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+        for column in ("trade_date", "date"):
+            if column in raw.columns:
+                parsed = cls._parse_date_column(raw[column])
+                result = result.fillna(parsed)
+        if not result.isna().any():
+            return result
         for column in ("timestamp", "time", "ts"):
             if column in raw.columns:
                 numeric = pd.to_numeric(raw[column], errors="coerce")
-                return pd.to_datetime(numeric, unit="ms", errors="coerce").dt.normalize()
-        return pd.Series(pd.NaT, index=raw.index)
+                converted = pd.to_datetime(numeric, unit="ms", errors="coerce", utc=True)
+                local = converted.dt.tz_convert(cls._resolve_tzinfo(tz_name)).dt.tz_localize(None)
+                result = result.fillna(local.dt.normalize())
+                break
+        return result
 
     @staticmethod
     def _daily_kline_count(start_date: str, end_date: str) -> int:
@@ -481,7 +536,7 @@ class TickFlowFetcher(BaseFetcher):
         if frame.empty:
             return frame
 
-        dates = cls._extract_date_series(frame)
+        dates = cls._extract_date_series(frame, tz_name=cls._market_timezone_name(symbol))
         valid_dates = dates.dropna()
         if valid_dates.empty:
             logger.warning(

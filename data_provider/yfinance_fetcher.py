@@ -56,6 +56,41 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _regular_session_prev_close(fast_info: Any) -> Optional[float]:
+    """读取上一常规交易时段（regular session）收盘价。
+
+    注意：yfinance ``FastInfo.previous_close`` 由 ``history(period="5d",
+    interval="1h", prepost=True)`` 按自然日分组取最后一根 K 线得到，会把
+    盘后（after-hours）成交价当作"前收盘价"。财报盘后大跌/大涨时，这会让
+    涨跌幅严重失真，因此这里只使用基于常规时段日 K 线的
+    ``regular_market_previous_close``。
+    """
+    try:
+        value = getattr(fast_info, 'regular_market_previous_close', None)
+    except Exception as exc:  # FastInfo 属性为惰性网络请求，可能抛异常
+        logger.debug(f"[Yfinance] regular_market_previous_close 读取失败: {exc}")
+        return None
+    value = _safe_float(value)
+    return value if value is not None and value > 0 else None
+
+
+def _regular_session_quote_from_history(ticker: Any) -> Optional[Dict[str, Any]]:
+    """用不含盘前盘后的日 K 线（prepost=False）构造最新价与前收盘价。"""
+    hist = ticker.history(period='5d', interval='1d', prepost=False)
+    if hist is None or hist.empty:
+        return None
+    today = hist.iloc[-1]
+    prev = hist.iloc[-2] if len(hist) > 1 else None
+    return {
+        'price': float(today['Close']),
+        'prev_close': float(prev['Close']) if prev is not None else None,
+        'open': float(today['Open']),
+        'high': float(today['High']),
+        'low': float(today['Low']),
+        'volume': int(today['Volume']),
+    }
+
+
 class YfinanceFetcher(BaseFetcher):
     """
     Yahoo Finance 数据源实现
@@ -714,25 +749,23 @@ class YfinanceFetcher(BaseFetcher):
                 if info is None:
                     raise ValueError("fast_info is None")
                 price = getattr(info, 'lastPrice', None) or getattr(info, 'last_price', None)
-                prev_close = getattr(info, 'previousClose', None) or getattr(info, 'previous_close', None)
+                prev_close = _regular_session_prev_close(info)
                 open_price = getattr(info, 'open', None)
                 high = getattr(info, 'dayHigh', None) or getattr(info, 'day_high', None)
                 low = getattr(info, 'dayLow', None) or getattr(info, 'day_low', None)
                 volume = getattr(info, 'lastVolume', None) or getattr(info, 'last_volume', None)
             except Exception:
                 logger.debug("[Yfinance] fast_info 失败，尝试 history 方法")
-                hist = ticker.history(period='2d')
-                if hist.empty:
+                bars = _regular_session_quote_from_history(ticker)
+                if bars is None:
                     logger.warning(f"[Yfinance] 无法获取 {yf_symbol} 的数据")
                     return None
-                today = hist.iloc[-1]
-                prev = hist.iloc[-2] if len(hist) > 1 else today
-                price = float(today['Close'])
-                prev_close = float(prev['Close'])
-                open_price = float(today['Open'])
-                high = float(today['High'])
-                low = float(today['Low'])
-                volume = int(today['Volume'])
+                price = bars['price']
+                prev_close = bars['prev_close']
+                open_price = bars['open']
+                high = bars['high']
+                low = bars['low']
+                volume = bars['volume']
 
             change_amount = None
             change_pct = None
@@ -841,7 +874,8 @@ class YfinanceFetcher(BaseFetcher):
                     raise ValueError("fast_info is None")
 
                 price = getattr(info, 'lastPrice', None) or getattr(info, 'last_price', None)
-                prev_close = getattr(info, 'previousClose', None) or getattr(info, 'previous_close', None)
+                # 前收盘价必须是上一常规交易时段收盘价，不能含盘前/盘后成交（见 _regular_session_prev_close）
+                prev_close = _regular_session_prev_close(info)
                 open_price = getattr(info, 'open', None)
                 high = getattr(info, 'dayHigh', None) or getattr(info, 'day_high', None)
                 low = getattr(info, 'dayLow', None) or getattr(info, 'day_low', None)
@@ -849,26 +883,35 @@ class YfinanceFetcher(BaseFetcher):
                 market_cap = getattr(info, 'marketCap', None) or getattr(info, 'market_cap', None)
 
             except Exception:
-                # 回退到 history 方法获取最新数据
+                # 回退到常规时段日 K 线（prepost=False）获取最新数据
                 logger.debug("[Yfinance] fast_info 失败，尝试 history 方法")
-                hist = ticker.history(period='2d')
-                if hist.empty:
+                bars = _regular_session_quote_from_history(ticker)
+                if bars is None:
                     if is_us_symbol:
                         logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据，尝试 Stooq 兜底")
                         return self._get_us_stock_quote_from_stooq(symbol)
                     logger.warning(f"[Yfinance] 无法获取 {symbol} 的数据")
                     return None
 
-                today = hist.iloc[-1]
-                prev = hist.iloc[-2] if len(hist) > 1 else today
-
-                price = float(today['Close'])
-                prev_close = float(prev['Close'])
-                open_price = float(today['Open'])
-                high = float(today['High'])
-                low = float(today['Low'])
-                volume = int(today['Volume'])
+                price = bars['price']
+                prev_close = bars['prev_close']
+                open_price = bars['open']
+                high = bars['high']
+                low = bars['low']
+                volume = bars['volume']
                 market_cap = None
+
+            # 获取股票名称与 provider 元数据
+            try:
+                ticker_info = ticker.info or {}
+            except Exception:
+                ticker_info = {}
+
+            if prev_close is None:
+                # 兜底：Yahoo quote 中明确表示常规时段的前收盘价字段
+                fallback_prev = _safe_float(ticker_info.get('regularMarketPreviousClose'))
+                if fallback_prev is not None and fallback_prev > 0:
+                    prev_close = fallback_prev
 
             # 计算涨跌幅
             change_amount = None
@@ -881,12 +924,6 @@ class YfinanceFetcher(BaseFetcher):
             amplitude = None
             if high is not None and low is not None and prev_close is not None and prev_close > 0:
                 amplitude = ((high - low) / prev_close) * 100
-
-            # 获取股票名称与 provider 元数据
-            try:
-                ticker_info = ticker.info or {}
-            except Exception:
-                ticker_info = {}
             try:
                 info_name = ticker_info.get('shortName', '') or ticker_info.get('longName', '') or ''
                 name = info_name if is_meaningful_stock_name(info_name, symbol) else STOCK_NAME_MAP.get(symbol, '')
