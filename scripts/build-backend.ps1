@@ -187,13 +187,18 @@ try {
 }
 
 Write-Host 'Verifying packaged AkShare calendar data...'
-$packagedAkshareCalendar = Join-Path 'dist\backend\stock_analysis' '_internal\akshare\file_fold\calendar.json'
-if (-not (Test-Path $packagedAkshareCalendar)) {
-  $packagedAkshareCalendar = Join-Path 'dist\backend\stock_analysis' 'akshare\file_fold\calendar.json'
+# AkShare >= 1.20.0 ships calendar.json under akshare\data\; older releases use akshare\file_fold\.
+$packagedAkshareCalendarCandidates = @(
+  (Join-Path 'dist\backend\stock_analysis' '_internal\akshare\data\calendar.json'),
+  (Join-Path 'dist\backend\stock_analysis' '_internal\akshare\file_fold\calendar.json'),
+  (Join-Path 'dist\backend\stock_analysis' 'akshare\data\calendar.json'),
+  (Join-Path 'dist\backend\stock_analysis' 'akshare\file_fold\calendar.json')
+)
+$packagedAkshareCalendar = $packagedAkshareCalendarCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $packagedAkshareCalendar) {
+  throw ("Packaged AkShare calendar data not found under dist\backend\stock_analysis. Checked: " + ($packagedAkshareCalendarCandidates -join ', '))
 }
-if (-not (Test-Path $packagedAkshareCalendar)) {
-  throw 'Packaged AkShare calendar data not found under dist\backend\stock_analysis.'
-}
+Write-Host "Found packaged AkShare calendar data: $packagedAkshareCalendar"
 
 Write-Host 'Verifying static asset references (packaged)...'
 $packagedStatic = Join-Path 'dist\backend\stock_analysis' '_internal\static'

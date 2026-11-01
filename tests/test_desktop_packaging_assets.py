@@ -39,8 +39,10 @@ class DesktopPackagingAssetsTestCase(unittest.TestCase):
 
         self.assertIn("--collect-data akshare", macos_script)
         self.assertIn("'--collect-data', 'akshare'", windows_script)
-        self.assertIn("_internal/akshare/file_fold/calendar.json", macos_script)
-        self.assertIn("_internal\\akshare\\file_fold\\calendar.json", windows_script)
+        # AkShare >= 1.20.0 moved calendar.json to akshare/data/; keep accepting the legacy file_fold/ layout.
+        for layout in ("data", "file_fold"):
+            self.assertIn(f"_internal/akshare/{layout}/calendar.json", macos_script)
+            self.assertIn(f"_internal\\akshare\\{layout}\\calendar.json", windows_script)
 
 
 if __name__ == "__main__":
