@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] Web 设置页 LLM 渠道模板中的 Modelflare、AIHubmix、Anspire 链接及 `AIHUBMIX_KEY` 说明文字改为不带 aff / share_code / utm / ref 参数的官网地址（AIHubmix 使用 `https://aihubmix.com`）；README、docs、`.env.example` 中的推荐链接暂不改动。
 - [改进] 设置页帮助链接改为指向本仓库文档：`config_registry.py` 与 Web `LLMChannelEditor` 中写死的原项目文档链接集中为 `DOCS_BASE_URL`（后端 `src/core/config_registry.py`、前端 `apps/dsa-web/src/utils/constants.ts`，两处互相注释引用并由测试校验一致），指向 `https://github.com/museaicode/Stock-Analysis/blob/main/docs/`。
 - [chore] 运行时出站请求标识改为中性的 `MIUSIAI/1.0`（Stooq/yfinance 回退、Gotify、ntfy、情报源抓取），不再携带原项目仓库链接；删除 `.github/FUNDING.yml`，`.github/ISSUE_TEMPLATE/config.yml` 与 Release 说明的 compare 链接改为指向本仓库；README 与 docs 中的 Docker 镜像地址暂不改动。
+- [改进] 美股个股日 K 线默认以 TickFlow 为首选：顺序改为 TickFlow → AlphaVantage → YFinance → Longbridge（长桥优先时 Longbridge → TickFlow → …）；新增 `FINNHUB_DAILY_ENABLED`（默认 `false`），Finnhub 默认不再请求免费套餐无权限的 `/stock/candle`，付费套餐设为 `true` 后排在 TickFlow 之后。TickFlow 在美股中固定排在其余数据源之前、不受 `TICKFLOW_PRIORITY` 影响，其余数据源仍按 `*_PRIORITY` 排序；美股指数不变。
+- [新功能] 新增 `US_REALTIME_SOURCE_PRIORITY`（可选 `finnhub`/`yfinance`/`longbridge`/`tickflow`/`alphavantage`），美股个股实时行情按列表顺序取主数据并由后续数据源补充缺失字段，未配置的数据源跳过、全部失败时回到原固定路线；留空行为不变，美股指数不受影响。Finnhub `/quote` 作为主数据时使用 `c`/`pc`/`dp`（缺 `dp` 时按前收盘价计算），全 0 视为失败，行情来源标记为 `finnhub`。
 
 ## [3.33.0] - 2026-10-15
 

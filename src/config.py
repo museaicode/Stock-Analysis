@@ -1003,6 +1003,10 @@ class Config:
     mx_apikey: Optional[str] = None
     mx_priority: int = 6
     finnhub_api_key: Optional[str] = None
+    # Finnhub 免费套餐不含 /stock/candle 历史 K 线；默认不参与美股日 K 路由
+    finnhub_daily_enabled: bool = False
+    # 美股个股实时行情优先级（finnhub/yfinance/longbridge/tickflow/alphavantage）；空=沿用固定路线
+    us_realtime_source_priority: str = ""
     alphavantage_api_key: Optional[str] = None
     longbridge_app_key: Optional[str] = None
     longbridge_app_secret: Optional[str] = None
@@ -1962,6 +1966,8 @@ class Config:
             mx_apikey=os.getenv('MX_APIKEY') or None,
             mx_priority=parse_env_int(os.getenv('MX_PRIORITY'), 6, field_name='MX_PRIORITY', minimum=0),
             finnhub_api_key=os.getenv('FINNHUB_API_KEY') or None,
+            finnhub_daily_enabled=parse_env_bool(os.getenv('FINNHUB_DAILY_ENABLED'), default=False),
+            us_realtime_source_priority=(os.getenv('US_REALTIME_SOURCE_PRIORITY') or '').strip(),
             alphavantage_api_key=os.getenv('ALPHAVANTAGE_API_KEY') or None,
             longbridge_app_key=os.getenv('LONGBRIDGE_APP_KEY') or None,
             longbridge_app_secret=os.getenv('LONGBRIDGE_APP_SECRET') or None,

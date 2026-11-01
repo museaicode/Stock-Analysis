@@ -173,7 +173,10 @@ daily_stock_analysis/
 | `SEARXNG_TIMEOUT_SECONDS` | 自建 SearXNG 单次搜索超时（秒，默认 `10`，最小 `1`）；实例较慢（如聚合引擎较多的 NAS 部署）时可调大，公共实例超时不受影响。GitHub Actions 需显式映射该变量 | 可选 |
 | `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空（或未设置/空白）时使用官方端点 `http://api.tushare.pro`，仅在需通过公司内网代理、跨境网络或自建镜像时填写 `http://` 或 `https://` 开头的完整地址 | 可选 |
-| `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；美股日 K 固定在 Finnhub 之后兜底（不受 `TICKFLOW_PRIORITY` 影响），美股实时行情用于补充字段；失败或权限不足时自动回退。 | 可选 |
+| `TICKFLOW_API_KEY` | [TickFlow](https://tickflow.org) API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；美股日 K 线以 TickFlow 为首选（长桥优先时排在长桥之后，不受 `TICKFLOW_PRIORITY` 影响），美股实时行情用于补充字段；失败或权限不足时自动回退。 | 可选 |
+| `FINNHUB_API_KEY` | [Finnhub](https://finnhub.io/register) API Key；可选，美股数据源。美股日 K 线以 TickFlow 为首选，Finnhub 默认只用于实时报价（`/quote`） | 可选 |
+| `FINNHUB_DAILY_ENABLED` | 是否让 Finnhub 参与美股个股日 K 线（`/stock/candle`），默认 `false`；免费套餐不含历史 K 线，请保持 `false`，付费套餐设为 `true` 后排在 TickFlow 之后 | 可选 |
+| `US_REALTIME_SOURCE_PRIORITY` | 美股个股实时行情优先级，可选 `finnhub`、`yfinance`、`longbridge`、`tickflow`、`alphavantage`，例如 `finnhub,yfinance,tickflow`；留空保持默认路线。只作用于美股个股，A 股请用 `REALTIME_SOURCE_PRIORITY` | 可选 |
 | `MX_APIKEY` / `MX_PRIORITY` | 妙想（东方财富 MX_API）补充数据源：在东财公开接口失败/限流时兜底获取筹码分布与个股资金流。**严格 opt-in 的第三方能力**：需用户自备 Key（妙想 Skills 页面），限时免费/会员配额策略可能调整、不承诺长期免费；未配置则不启用、行为不变。`MX_PRIORITY` 默认 `6`。GitHub Actions 需在 Secrets 配置 `MX_APIKEY` | 可选 |
 | `LONGBRIDGE_OAUTH_CLIENT_ID` | [Longbridge OpenAPI](https://open.longbridge.com/) OAuth client_id；留空且无 Legacy Access Token 时会兼容使用 `LONGBRIDGE_APP_KEY` | 可选 |
 | `LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` | OAuth token 缓存文件的 base64 内容，供 GitHub Actions / Docker 等 headless 环境恢复 SDK token 缓存 | 可选 |
@@ -437,13 +440,16 @@ daily_stock_analysis/
 |--------|------|--------|:----:|
 | `TUSHARE_TOKEN` | Tushare Pro Token | - | 可选 |
 | `TUSHARE_HTTP_URL` | Tushare Pro HTTP 接入地址；留空时使用官方端点 `http://api.tushare.pro`，仅在需通过公司内网代理、跨境网络或自建镜像时填 `http://` 或 `https://` 开头的完整地址 | `http://api.tushare.pro` | 可选 |
-| `TICKFLOW_API_KEY` | TickFlow API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；美股日 K 路由为 Finnhub → TickFlow → AlphaVantage → YFinance → Longbridge（Longbridge 优先时排在最前），TickFlow 始终紧跟 Finnhub、不受 `TICKFLOW_PRIORITY` 影响；美股实时行情用于补充字段，无权限时短期跳过；失败或权限不足时自动回退。 | - | 可选 |
+| `TICKFLOW_API_KEY` | TickFlow API Key；可选，用于 A 股日 K、实时行情、股票列表/名称与大盘复盘增强；美股个股日 K 路由为 TickFlow → Finnhub（仅 `FINNHUB_DAILY_ENABLED=true` 时）→ AlphaVantage → YFinance → Longbridge（长桥优先时为 Longbridge → TickFlow → …），TickFlow 固定排在其余数据源之前、不受 `TICKFLOW_PRIORITY` 影响，其余数据源之间仍按 `*_PRIORITY` 排序；美股指数保持 YFinance 首选；美股实时行情用于补充字段，无权限时短期跳过；失败或权限不足时自动回退。 | - | 可选 |
 | `TICKFLOW_PRIORITY` | TickFlow 普通 A 股日 K 数据源优先级；数字越小越早尝试，默认 `2`；未配置 API Key 时不启用；已登记指数使用独立固定链，不读取本变量；不影响实时行情。 | `2` | 可选 |
 | `TENCENT_PRIORITY` | 腾讯直连普通 A 股日 K 数据源优先级；数字越小越早尝试，默认 `5`，作为通用链路最终兜底；已登记指数使用独立固定链，不读取本变量；不影响实时行情。 | `5` | 可选 |
 | `TICKFLOW_KLINE_ADJUST` | TickFlow 日 K 复权模式：`none`、`forward`、`backward`、`forward_additive`、`backward_additive`。 | `none` | 可选 |
 | `TICKFLOW_BATCH_DAILY_ENABLED` | 是否启用 TickFlow 批量日 K 预取；权限不足会短期缓存失败状态，并继续走常规回退。 | `true` | 可选 |
 | `TICKFLOW_BATCH_SIZE` | TickFlow 日 K 与实时行情批量请求的单批最大标的数。 | `100` | 可选 |
 | `FUTU_HK_REALTIME_SOURCE_PRIORITY` | 港股实时行情独立优先级，可选 `futu`、`longbridge`、`akshare`、`yfinance`，按逗号分隔；失败自动回退。 | `futu,longbridge,akshare,yfinance` | 可选 |
+| `FINNHUB_API_KEY` | Finnhub API Key；美股日 K 线以 TickFlow 为首选，Finnhub 默认只用于实时报价（`/quote`，免费套餐可用，返回常规时段前收盘价 `pc` 与涨跌幅 `dp`）。 | - | 可选 |
+| `FINNHUB_DAILY_ENABLED` | 是否让 Finnhub 参与美股个股日 K 线（`/stock/candle`）。免费套餐不含历史 K 线（403），请保持 `false`；付费套餐设为 `true` 后排在 TickFlow 之后。设为 `true` 但套餐无权限时，403 后 24 小时内不再请求 candle 接口。 | `false` | 可选 |
+| `US_REALTIME_SOURCE_PRIORITY` | 美股个股实时行情优先级，逗号分隔，可选 `finnhub`、`yfinance`、`longbridge`、`tickflow`、`alphavantage`。第一个返回有效价格的数据源作为主数据，缺失字段（前收盘价、涨跌幅、成交量、换手率、量比等）按同一顺序由后续数据源补充；未配置 Key / 不可用的数据源跳过，全部失败时回到默认路线（YFinance 为主，配置长桥时长桥为主）。留空保持默认路线；美股指数不受影响；未知名称记录 warning 并忽略。A 股请用 `REALTIME_SOURCE_PRIORITY`。 | 空 | 可选 |
 | `LONGBRIDGE_OAUTH_CLIENT_ID` | Longbridge OAuth client_id；留空且无 Legacy Access Token 时会兼容使用 `LONGBRIDGE_APP_KEY` | - | 可选 |
 | `LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` | OAuth token 缓存文件的 base64 内容，供 GitHub Actions / Docker 等 headless 环境使用 | - | 可选 |
 | `LONGBRIDGE_APP_KEY` | Longbridge Legacy App Key；无 `LONGBRIDGE_ACCESS_TOKEN` 时也可作为 OAuth client_id 兼容别名 | - | 可选 |

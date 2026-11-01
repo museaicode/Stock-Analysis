@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests: TickFlow US-stock support and Finnhub-first US daily routing."""
+"""Tests: TickFlow US-stock support and TickFlow-first US daily routing."""
 
 import os
 import sys
@@ -220,16 +220,16 @@ def _defaults(**overrides):
 
 
 DEFAULT_ORDER = [
-    "FinnhubFetcher",
     "TickFlowFetcher",
+    "FinnhubFetcher",
     "AlphaVantageFetcher",
     "YfinanceFetcher",
     "LongbridgeFetcher",
 ]
 LONGBRIDGE_ORDER = [
     "LongbridgeFetcher",
-    "FinnhubFetcher",
     "TickFlowFetcher",
+    "FinnhubFetcher",
     "AlphaVantageFetcher",
     "YfinanceFetcher",
 ]
@@ -249,31 +249,35 @@ class UsDailyRoutingOrderTestCase(unittest.TestCase):
             DEFAULT_ORDER,
         )
 
-    def test_tickflow_priority_zero_still_follows_finnhub(self):
-        manager = _manager(_defaults(TickFlowFetcher=0))
-        self.assertEqual(
-            manager._order_us_sources_by_priority(list(DEFAULT_ORDER), pin_first=False),
-            DEFAULT_ORDER,
-        )
+    def test_tickflow_priority_does_not_move_tickflow_from_first(self):
+        for tickflow_priority in (0, 2, 3, 99):
+            with self.subTest(tickflow_priority=tickflow_priority):
+                manager = _manager(_defaults(TickFlowFetcher=tickflow_priority))
+                self.assertEqual(
+                    manager._order_us_sources_by_priority(list(DEFAULT_ORDER), pin_first=False),
+                    DEFAULT_ORDER,
+                )
 
-    def test_yfinance_priority_zero_promotes_it_first(self):
+    def test_yfinance_priority_zero_reorders_sources_after_tickflow(self):
         manager = _manager(_defaults(YfinanceFetcher=0))
         self.assertEqual(
             manager._order_us_sources_by_priority(list(DEFAULT_ORDER), pin_first=False),
-            ["YfinanceFetcher", "FinnhubFetcher", "TickFlowFetcher", "AlphaVantageFetcher", "LongbridgeFetcher"],
+            ["TickFlowFetcher", "YfinanceFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "LongbridgeFetcher"],
         )
 
-    def test_without_finnhub_tickflow_precedes_alphavantage(self):
-        fetchers = [f for f in _defaults() if f.name != "FinnhubFetcher"]
-        manager = _manager(fetchers)
-        order = manager._order_us_sources_by_priority(list(DEFAULT_ORDER), pin_first=False)
-        self.assertLess(order.index("TickFlowFetcher"), order.index("AlphaVantageFetcher"))
+    def test_without_finnhub_tickflow_stays_first(self):
+        order_without_finnhub = [name for name in DEFAULT_ORDER if name != "FinnhubFetcher"]
+        manager = _manager([f for f in _defaults() if f.name != "FinnhubFetcher"])
+        self.assertEqual(
+            manager._order_us_sources_by_priority(order_without_finnhub, pin_first=False),
+            ["TickFlowFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"],
+        )
 
-    def test_longbridge_preferred_stays_pinned_first(self):
-        manager = _manager(_defaults())
+    def test_longbridge_preferred_stays_pinned_first_then_tickflow(self):
+        manager = _manager(_defaults(TickFlowFetcher=0, YfinanceFetcher=0))
         self.assertEqual(
             manager._order_us_sources_by_priority(list(LONGBRIDGE_ORDER), pin_first=True),
-            LONGBRIDGE_ORDER,
+            ["LongbridgeFetcher", "TickFlowFetcher", "YfinanceFetcher", "FinnhubFetcher", "AlphaVantageFetcher"],
         )
 
     def test_daily_market_support_includes_us(self):

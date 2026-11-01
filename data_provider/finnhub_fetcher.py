@@ -186,16 +186,24 @@ class FinnhubFetcher(BaseFetcher):
             logger.warning(f"[Finnhub] Realtime quote failed for {symbol}: {e}")
             return None
 
+        # /quote 对无效代码返回全 0（c=0），视为失败交给下一个数据源
         price = data.get('c')
-        if not price:
+        if not price or price <= 0:
             return None
 
-        prev_close = data.get('pc', 0)
+        # c=当前价，pc=常规时段前收盘价，dp=涨跌幅(%)，d=涨跌额
+        prev_close = data.get('pc') or None
+        if prev_close is not None and prev_close <= 0:
+            prev_close = None
         change_pct = data.get('dp')
         change_amount = data.get('d')
-        high = data.get('h')
-        low = data.get('l')
-        open_price = data.get('o')
+        if change_pct is None and prev_close:
+            change_pct = (price - prev_close) / prev_close * 100
+        if change_amount is None and prev_close:
+            change_amount = price - prev_close
+        high = data.get('h') or None
+        low = data.get('l') or None
+        open_price = data.get('o') or None
 
         amplitude = None
         if high and low and prev_close and prev_close > 0:
@@ -203,7 +211,7 @@ class FinnhubFetcher(BaseFetcher):
 
         return UnifiedRealtimeQuote(
             code=symbol,
-            source=RealtimeSource.FALLBACK,
+            source=RealtimeSource.FINNHUB,
             price=price,
             change_pct=round(change_pct, 2) if change_pct is not None else None,
             change_amount=round(change_amount, 4) if change_amount is not None else None,

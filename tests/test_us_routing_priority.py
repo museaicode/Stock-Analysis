@@ -8,7 +8,8 @@ from pathlib import Path
 
 from data_provider.base import DataFetcherManager
 
-DEFAULT_US_ORDER = ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
+# 默认 FINNHUB_DAILY_ENABLED=false：Finnhub 不参与美股个股日 K
+DEFAULT_US_ORDER = ["TickFlowFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
 
 
 class _F:
@@ -30,6 +31,7 @@ def _manager(fetchers):
 
 def _defaults():
     return [
+        _F("TickFlowFetcher", 2),
         _F("FinnhubFetcher", 2),
         _F("AlphaVantageFetcher", 3),
         _F("YfinanceFetcher", 4),
@@ -43,22 +45,19 @@ class TestUSRoutingByPriority:
         order = manager._order_us_sources_by_priority(list(DEFAULT_US_ORDER), pin_first=False)
         assert order == DEFAULT_US_ORDER
 
-    def test_yfinance_priority_zero_promotes_it_first(self):
-        fetchers = _defaults()
-        fetchers[2] = _F("YfinanceFetcher", 0)  # YFINANCE_PRIORITY=0
+    def test_yfinance_priority_zero_promotes_it_right_after_tickflow(self):
+        fetchers = [_F(f.name, 0) if f.name == "YfinanceFetcher" else f for f in _defaults()]  # YFINANCE_PRIORITY=0
         manager = _manager(fetchers)
         order = manager._order_us_sources_by_priority(list(DEFAULT_US_ORDER), pin_first=False)
-        assert order[0] == "YfinanceFetcher"
-        assert order[1:] == ["FinnhubFetcher", "AlphaVantageFetcher", "LongbridgeFetcher"]
+        assert order == ["TickFlowFetcher", "YfinanceFetcher", "AlphaVantageFetcher", "LongbridgeFetcher"]
 
     def test_longbridge_preferred_stays_pinned_first(self):
         manager = _manager(_defaults())
         order = manager._order_us_sources_by_priority(
-            ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher"],
+            ["LongbridgeFetcher", "TickFlowFetcher", "AlphaVantageFetcher", "YfinanceFetcher"],
             pin_first=True,
         )
-        assert order[0] == "LongbridgeFetcher"
-        assert order[1:] == ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher"]
+        assert order == ["LongbridgeFetcher", "TickFlowFetcher", "AlphaVantageFetcher", "YfinanceFetcher"]
 
     def test_us_index_keeps_yfinance_pinned(self):
         manager = _manager(_defaults())

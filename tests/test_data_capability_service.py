@@ -217,8 +217,9 @@ def test_provider_dataset_market_matrix_matches_fundamental_runtime_routes() -> 
         "us",
     ]
     assert "quote.realtime" not in _provider(overview, "pytdx")["datasets"]
-    assert "quote.realtime" not in _provider(overview, "finnhub")["datasets"]
-    assert "quote.realtime" not in _provider(overview, "alphavantage")["datasets"]
+    # US_REALTIME_SOURCE_PRIORITY can route US stock realtime quotes to these providers.
+    assert _provider(overview, "finnhub")["dataset_markets"]["quote.realtime"] == ["us"]
+    assert _provider(overview, "alphavantage")["dataset_markets"]["quote.realtime"] == ["us"]
     assert "index.daily" not in _provider(overview, "finnhub")["datasets"]
 
 
@@ -525,6 +526,50 @@ def test_daily_dataset_quality_prefers_longbridge_for_us_when_available() -> Non
     assert daily_quality["coverage"]["markets"]["us"]["status"] == "ok"
     assert daily_quality["coverage"]["markets"]["us"]["source"] == "longbridge"
     assert "us:finnhub" not in daily_quality["fallback_from"]
+
+
+def test_us_daily_priority_mirrors_tickflow_first_runtime_route() -> None:
+    fetchers = [
+        _Fetcher("FinnhubFetcher", 2, available=True),
+        _Fetcher("TickFlowFetcher", 2, available=True),
+        _Fetcher("AlphaVantageFetcher", 3, available=True),
+        _Fetcher("YfinanceFetcher", 4, available=True),
+    ]
+
+    default_service = DataCapabilityService(
+        config=_config(finnhub_api_key="key", tickflow_api_key="key"),
+        fetcher_manager=_FetcherManager(fetchers),
+    )
+    us_quality = _dataset(default_service.get_overview(), "kline.daily")["coverage"]["markets"]["us"]
+    assert default_service._us_daily_priority(fetchers) == ["tickflow", "alphavantage", "yfinance"]
+    assert us_quality["source"] == "tickflow"
+
+    enabled_service = DataCapabilityService(
+        config=_config(finnhub_api_key="key", tickflow_api_key="key", finnhub_daily_enabled=True),
+        fetcher_manager=_FetcherManager(fetchers),
+    )
+    assert enabled_service._us_daily_priority(fetchers) == [
+        "tickflow", "finnhub", "alphavantage", "yfinance",
+    ]
+
+
+def test_us_realtime_priority_mirrors_configured_us_realtime_source_priority() -> None:
+    manager = _FetcherManager([
+        _Fetcher("FinnhubFetcher", 2, available=True),
+        _Fetcher("YfinanceFetcher", 4, available=True),
+    ])
+    service = DataCapabilityService(
+        config=_config(finnhub_api_key="key", us_realtime_source_priority="finnhub,tickflow,yfinance"),
+        fetcher_manager=manager,
+    )
+
+    overview = service.get_overview()
+    priorities = {item["scenario"]: item for item in overview["priorities"]}
+    us_quality = _dataset(overview, "quote.realtime")["coverage"]["markets"]["us"]
+
+    # tickflow is not registered (no key) and is skipped, like the runtime route.
+    assert priorities["us.realtime"]["providers"] == ["finnhub", "yfinance", "longbridge"]
+    assert us_quality["source"] == "finnhub"
 
 
 def test_us_daily_priority_omits_unregistered_configured_sources() -> None:

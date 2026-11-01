@@ -104,6 +104,7 @@ class RealtimeSource(Enum):
     STOOQ = "stooq"                 # Stooq 美股兜底
     LONGBRIDGE = "longbridge"       # 长桥（美股/港股兜底）
     FUTU = "futu"                   # 富途 OpenD（港股）
+    FINNHUB = "finnhub"             # Finnhub /quote（美股）
     FALLBACK = "fallback"           # 降级兜底
 
 

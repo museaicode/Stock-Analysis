@@ -146,6 +146,7 @@ _PROVIDER_DEFINITIONS: Sequence[_ProviderDefinition] = (
         label="Finnhub",
         fetcher_name="FinnhubFetcher",
         dataset_markets={
+            "quote.realtime": ("us",),
             "kline.daily": ("us",),
         },
     ),
@@ -154,6 +155,7 @@ _PROVIDER_DEFINITIONS: Sequence[_ProviderDefinition] = (
         label="Alpha Vantage",
         fetcher_name="AlphaVantageFetcher",
         dataset_markets={
+            "quote.realtime": ("us",),
             "kline.daily": ("us",),
         },
     ),
@@ -427,7 +429,7 @@ class DataCapabilityService:
                 "us.realtime",
                 self._us_realtime_priority(fetchers),
                 "DataFetcherManager US realtime route",
-                known_sources={"longbridge", "yfinance"},
+                known_sources={"longbridge", "yfinance", "finnhub", "tickflow", "alphavantage"},
             ),
             self._priority_view(
                 "daily.generic",
@@ -483,14 +485,33 @@ class DataCapabilityService:
             return _split_priority("sina,efinance,akshare_em,em_datacenter")
 
     def _us_realtime_priority(self, fetchers: Sequence[Any]) -> List[str]:
+        """Mirror DataFetcherManager US stock realtime routing.
+
+        US_REALTIME_SOURCE_PRIORITY sources (registered and available ones only)
+        are tried first; the fixed Longbridge/YFinance route stays as fallback.
+        """
+        from data_provider.base import DataFetcherManager
+
         fetcher_map = {str(getattr(fetcher, "name", "")): fetcher for fetcher in fetchers}
         longbridge = fetcher_map.get("LongbridgeFetcher")
         if longbridge is not None and self._fetcher_available_for_capability(
             longbridge,
             capability="realtime_quote",
         ):
-            return ["longbridge", "yfinance"]
-        return ["yfinance", "longbridge"]
+            fixed_route = ["longbridge", "yfinance"]
+        else:
+            fixed_route = ["yfinance", "longbridge"]
+        configured = []
+        for token in DataFetcherManager._parse_us_realtime_source_priority(
+            getattr(self.config, "us_realtime_source_priority", "")
+        ):
+            fetcher = fetcher_map.get(DataFetcherManager._US_REALTIME_SOURCE_MAP[token])
+            if fetcher is not None and self._fetcher_available_for_capability(
+                fetcher,
+                capability="realtime_quote",
+            ):
+                configured.append(token)
+        return configured + [token for token in fixed_route if token not in configured]
 
     @staticmethod
     def _priority_view(
@@ -831,17 +852,25 @@ class DataCapabilityService:
         return resolve
 
     def _us_daily_priority(self, fetchers: Sequence[Any]) -> List[str]:
+        """Mirror DataFetcherManager US stock daily routing (TickFlow first).
+
+        Finnhub joins only when FINNHUB_DAILY_ENABLED=true; Longbridge stays
+        first when available, followed by TickFlow.
+        """
+        candidates = {"longbridge", "tickflow", "alphavantage", "yfinance"}
+        if getattr(self.config, "finnhub_daily_enabled", False) is True:
+            candidates.add("finnhub")
         available = {
             provider
             for fetcher in fetchers
             if (provider := _FETCHER_TO_PROVIDER.get(str(getattr(fetcher, "name", ""))))
-            in {"longbridge", "finnhub", "alphavantage", "yfinance"}
+            in candidates
             and self._fetcher_available_for_capability(fetcher, capability="daily_data")
         }
         preferred = (
-            ["longbridge", "finnhub", "alphavantage", "yfinance"]
+            ["longbridge", "tickflow", "finnhub", "alphavantage", "yfinance"]
             if "longbridge" in available
-            else ["finnhub", "alphavantage", "yfinance", "longbridge"]
+            else ["tickflow", "finnhub", "alphavantage", "yfinance", "longbridge"]
         )
         return [provider for provider in preferred if provider in available]
 
