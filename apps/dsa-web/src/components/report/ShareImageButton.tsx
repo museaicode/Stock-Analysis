@@ -7,6 +7,7 @@ import { getParsedApiError, isParsedApiError } from '../../api/error';
 import type { ReportLanguage } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 import { InlineAlert } from '../common/InlineAlert';
+import { OVERLAY_Z_INDEX } from '../common/overlayLayers';
 import { ToastViewport } from '../common/ToastViewport';
 import { Tooltip } from '../common/Tooltip';
 
@@ -30,6 +31,8 @@ interface ShareImageButtonProps {
 }
 
 const TOAST_DURATION_MS = 4000;
+
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const safeFilenamePart = (value: string): string => {
   const normalized = value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-');
@@ -136,6 +139,9 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   const loadTokenRef = useRef(0);
   const inFlightRecordRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const isOpen = activeRecordId !== undefined && openRecordId === activeRecordId;
   const currentImage = image && image.recordId === activeRecordId ? image : null;
@@ -182,13 +188,46 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
     setOpenRecordId(null);
   }, []);
 
+  // 弹窗可能从抽屉内打开：在捕获阶段处理 Esc 并 preventDefault，抽屉据此跳过本次 Esc，
+  // 保证只关闭最上层；Tab 焦点限制在弹窗内，关闭后焦点回到触发按钮。
   useEffect(() => {
     if (!isOpen) return undefined;
+    const trigger = triggerRef.current;
+    closeButtonRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeDialog();
+      if (event.key === 'Escape') {
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        closeDialog();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const dialogNode = dialogRef.current;
+      if (!dialogNode) return;
+      const focusable = Array.from(dialogNode.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialogNode.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown, true);
+      if (trigger?.isConnected) trigger.focus();
+    };
   }, [closeDialog, isOpen]);
 
   // 第一步：点击后立即打开弹窗（加载态），图片在弹窗内异步生成。
@@ -272,21 +311,29 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
 
   const dialog = isOpen ? (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onClick={closeDialog}
+      className="fixed inset-0 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      style={{ zIndex: OVERLAY_Z_INDEX.modal }}
+      data-testid="share-image-overlay"
+      onClick={(event) => {
+        // Portal 内的点击在 React 树中仍会冒泡到抽屉等祖先组件，这里统一截断；
+        // 只有点在遮罩本身时才关闭弹窗。
+        event.stopPropagation();
+        if (event.target === event.currentTarget) closeDialog();
+      }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         className="flex max-h-[calc(100vh-32px)] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border/70 bg-elevated shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
           <h3 id={titleId} className="min-w-0 truncate text-base font-medium text-foreground">
             {text.shareImageDialogTitle}
           </h3>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={closeDialog}
             className="rounded-md p-1 text-secondary-text transition-colors hover:bg-hover hover:text-foreground"
@@ -348,7 +395,7 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
   ) : null;
 
   const toastNode = toast ? (
-    <ToastViewport className="z-[80]">
+    <ToastViewport style={{ zIndex: OVERLAY_Z_INDEX.toast }}>
       <InlineAlert
         variant={toast.variant}
         title={toast.title}
@@ -363,6 +410,7 @@ export const ShareImageButton: React.FC<ShareImageButtonProps> = ({
       <Tooltip content={text.generateShareImage}>
         <span className="inline-flex shrink-0">
           <button
+            ref={triggerRef}
             type="button"
             onClick={handleOpen}
             className={`home-surface-button flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium text-secondary-text hover:text-foreground disabled:opacity-50 ${className}`}

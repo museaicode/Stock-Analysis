@@ -54,6 +54,8 @@ SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
    - “复制图片”：仅在 `navigator.clipboard.write` 与 `ClipboardItem` 均可用时显示。浏览器剪贴板普遍只接受 PNG，JPEG 图片会在写入时于浏览器内转为 PNG（以 Promise 形式交给 `ClipboardItem`，不影响用户激活）；超长图片在部分移动端浏览器上可能因 Canvas 尺寸限制而复制失败，此时会提示失败，可改用下载。
    - “系统分享”：仅在 `navigator.canShare({ files })` 返回 true 时显示，调用 `navigator.share` 打开系统分享面板。
 
+预览弹窗与失败提示统一渲染到 `document.body`，层级高于“完整分析报告”抽屉（层级常量见 `apps/dsa-web/src/components/common/overlayLayers.ts`）。在抽屉内打开弹窗时：点击弹窗内的图片或按钮不会关闭任何层；点击弹窗遮罩、关闭按钮或按 Esc 只关闭弹窗，抽屉保持打开，再按一次 Esc 才关闭抽屉；弹窗打开时键盘焦点限定在弹窗内，关闭后回到“分享”按钮。打印 / 导出 PDF 时弹窗不会出现在输出中。
+
 图片生成接口失败、下载 / 复制 / 系统分享失败（包括浏览器拒绝操作的 `NotAllowedError`）都会在页面右下角显示提示；接口失败时会关闭弹窗并展示服务端返回的原因（例如转图工具不可用），可直接再次点击“分享”重试。用户在系统分享面板中主动取消（`AbortError`）不提示。
 
 `share-image` 接口默认返回压缩后的 JPEG（quality 85，`Content-Type: image/jpeg`，下载文件名 `dsa-report-<id>.jpg`）。默认 `wkhtmltoimage` 引擎输出的完整报告长图 PNG 常达数 MB 至数十 MB（1080px 宽），转 JPEG 后体积大幅下降（本地 1080×7095 样例：PNG 30.7MB → JPEG 0.66MB），明显缩短首次打开弹窗的等待时间；Playwright 引擎输出的 PNG 本身压缩率较高，转 JPEG 收益较小（同类样例约减少 28%）。压缩复用企业微信长图使用的 Pillow 公共函数（`src/utils/image_compress.py`），带透明通道时铺白底；若未安装 Pillow、图片无法解码或高度超过 JPEG 单边上限（65500px），接口回退为原始 PNG，此时 `Content-Type` 为 `image/png`、扩展名为 `.png`，前端按实际格式处理。

@@ -2,6 +2,7 @@ import type React from 'react';
 import { useEffect, useCallback } from 'react';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { cn } from '../../utils/cn';
+import { OVERLAY_Z_INDEX } from './overlayLayers';
 
 let activeDrawerCount = 0;
 
@@ -25,15 +26,17 @@ export const Drawer: React.FC<DrawerProps> = ({
   title,
   children,
   width = 'max-w-2xl',
-  zIndex = 50,
+  zIndex = OVERLAY_Z_INDEX.drawer,
   side = 'right',
   backdropClassName,
 }) => {
   const { t } = useUiLanguage();
-  // Close the drawer when Escape is pressed.
+  // Close the drawer when Escape is pressed. A layer stacked above the drawer
+  // (e.g. a modal opened from inside it) handles Escape first and calls
+  // preventDefault(), so only the top-most layer closes.
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !e.defaultPrevented) {
         onClose();
       }
     },
