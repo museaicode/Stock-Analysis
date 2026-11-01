@@ -29,6 +29,7 @@ import { useWatchlist } from '../hooks/useWatchlist';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import type { SetupStatusResponse } from '../types/systemConfig';
 import { normalizeReportLanguage } from '../utils/reportLanguage';
+import { getMarketReviewRegion } from '../utils/reportPrint';
 import type {
   AnalyzeAsyncResponse,
   HistoryItem,
@@ -1891,6 +1892,9 @@ const HomePage: React.FC = () => {
           stockName={selectedReport.meta.stockName || ''}
           stockCode={selectedReport.meta.stockCode}
           reportLanguage={reportLanguage}
+          reportType={selectedReport.meta.reportType}
+          createdAt={selectedReport.meta.createdAt}
+          marketRegion={getMarketReviewRegion(selectedReport)}
           onClose={closeMarkdownDrawer}
         />
       ) : null}

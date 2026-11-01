@@ -10,6 +10,9 @@ export interface ReportMarkdownProps {
   stockCode: string;
   onClose: () => void;
   reportLanguage?: ReportLanguage;
+  reportType?: string;
+  createdAt?: string;
+  marketRegion?: string | null;
 }
 
 /**
@@ -22,6 +25,9 @@ export const ReportMarkdown: React.FC<ReportMarkdownProps> = ({
   stockCode,
   onClose,
   reportLanguage = 'zh',
+  reportType,
+  createdAt,
+  marketRegion,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -43,6 +49,9 @@ export const ReportMarkdown: React.FC<ReportMarkdownProps> = ({
         stockName={stockName}
         stockCode={stockCode}
         reportLanguage={reportLanguage}
+        reportType={reportType}
+        createdAt={createdAt}
+        marketRegion={marketRegion}
         onRequestClose={handleClose}
       />
     </Drawer>

@@ -678,6 +678,10 @@ const zh = {
   'report.addToWatchlist': '加入自选',
   'report.removeFromWatchlist': '从自选删除',
   'report.watchlist': '自选',
+  'report.exportPdf': '导出 PDF',
+  'report.exportPdfHint': '在打印对话框中选择“另存为 PDF”',
+  'report.printAnalysisTime': '分析时间',
+  'report.printDisclaimer': '本报告由 AI 自动生成，仅供研究交流，不构成投资建议。市场有风险，投资需谨慎。',
 
   'settings.actionSuccess': '操作成功',
   'settings.activePanelDescription': '使用统一字段卡片维护当前分类的系统配置。',
@@ -1681,6 +1685,10 @@ const en: Record<UiTextKey, string> = {
   'report.addToWatchlist': 'Add to watchlist',
   'report.removeFromWatchlist': 'Remove from watchlist',
   'report.watchlist': 'Watchlist',
+  'report.exportPdf': 'Export PDF',
+  'report.exportPdfHint': 'Choose "Save as PDF" in the print dialog',
+  'report.printAnalysisTime': 'Analysis time',
+  'report.printDisclaimer': 'This report is AI-generated for research and discussion only and does not constitute investment advice. Investing involves risk.',
 
   'settings.actionSuccess': 'Success',
   'settings.activePanelDescription': 'Use unified field cards to maintain this configuration category.',

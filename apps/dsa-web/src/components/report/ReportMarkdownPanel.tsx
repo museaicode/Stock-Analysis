@@ -1,10 +1,14 @@
 import type React from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { historyApi } from '../../api/history';
+import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { ReportLanguage } from '../../types/analysis';
+import { formatDateTime } from '../../utils/format';
 import { markdownToPlainText } from '../../utils/markdown';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
+import { buildReportPrintTitle, REPORT_PRINT_ROOT_ATTR } from '../../utils/reportPrint';
 import { Tooltip } from '../common/Tooltip';
+import { PrintReportButton } from './PrintReportButton';
 import { ReportMarkdownBody } from './ReportMarkdownBody';
 import { ShareImageButton } from './ShareImageButton';
 
@@ -14,6 +18,12 @@ export interface ReportMarkdownPanelProps {
   stockCode: string;
   onRequestClose: () => void;
   reportLanguage?: ReportLanguage;
+  /** `market_review` switches the PDF file name to the market-review pattern. */
+  reportType?: string;
+  /** Analysis timestamp (ISO); used for the PDF file name and the printed header. */
+  createdAt?: string;
+  /** Market-review region string (e.g. `cn`, `cn,us`, `both`). */
+  marketRegion?: string | null;
 }
 
 export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
@@ -22,13 +32,23 @@ export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
   stockCode,
   onRequestClose,
   reportLanguage = 'zh',
+  reportType,
+  createdAt,
+  marketRegion,
 }) => {
+  const { t } = useUiLanguage();
   const text = getReportText(normalizeReportLanguage(reportLanguage));
   const loadReportFailedText = text.loadReportFailed;
   const [content, setContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedType, setCopiedType] = useState<'markdown' | 'text' | null>(null);
+  const isMarketReview = reportType === 'market_review';
+  const printTitle = useMemo(
+    () => buildReportPrintTitle({ reportType, stockName, stockCode, createdAt, marketRegion }),
+    [reportType, stockName, stockCode, createdAt, marketRegion],
+  );
+  const printedAnalysisTime = createdAt ? formatDateTime(createdAt) : '';
 
   const handleCopyMarkdown = useCallback(async () => {
     if (!content) return;
@@ -83,8 +103,8 @@ export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
   }, [recordId, loadReportFailedText]);
 
   return (
-    <>
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <div {...{ [REPORT_PRINT_ROOT_ATTR]: '' }} className="report-print-root">
+      <div className="report-print-header mb-4 flex items-center justify-between gap-3">
         <div className="flex flex-1 items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--home-action-report-bg)] text-[var(--home-action-report-text)]">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -94,10 +114,17 @@ export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
           <div>
             <h2 className="text-base font-semibold text-foreground">{stockName || stockCode}</h2>
             <p className="text-xs text-muted-text">{text.fullReport}</p>
+            <p className="report-print-only text-xs text-muted-text" data-testid="report-print-meta">
+              {[stockName || stockCode, !isMarketReview && stockName && stockCode !== stockName ? stockCode : '']
+                .filter(Boolean)
+                .join(' · ')}
+              {printedAnalysisTime ? ` · ${t('report.printAnalysisTime')}: ${printedAnalysisTime}` : ''}
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="report-print-hide flex items-center gap-2">
+          <PrintReportButton printTitle={printTitle} disabled={isLoading || !content} />
           <ShareImageButton
             recordId={recordId}
             reportTitle={`${stockName || stockCode}-${stockCode}`}
@@ -171,10 +198,15 @@ export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
           </button>
         </div>
       ) : (
-        <ReportMarkdownBody content={content} />
+        <>
+          <ReportMarkdownBody content={content} testId="report-markdown-body" />
+          <p className="report-print-only report-print-disclaimer" data-testid="report-print-disclaimer">
+            {t('report.printDisclaimer')}
+          </p>
+        </>
       )}
 
-      <div className="home-divider mt-6 flex justify-end border-t pt-4">
+      <div className="report-print-hide home-divider mt-6 flex justify-end border-t pt-4">
         <button
           type="button"
           onClick={onRequestClose}
@@ -183,6 +215,6 @@ export const ReportMarkdownPanel: React.FC<ReportMarkdownPanelProps> = ({
           {text.dismiss}
         </button>
       </div>
-    </>
+    </div>
   );
 };
