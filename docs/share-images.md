@@ -1,6 +1,6 @@
 # 分享图片模板与数据填充
 
-分享图片用于把个股分析和市场复盘转换为适合社交平台传播的 1080px 长图。个股和大盘使用两套独立的信息结构，但共用 MIUSIAI 品牌（顶部品牌栏与底部品牌标题，由 `src/share_image.py` 中的 `PROJECT_BRAND_NAME` 定义）、仓库标识 `ZhuLinsen/daily_stock_analysis` 和风险声明。GitHub 区不放二维码；Web 与桌面端分享图默认展示仓库内置小红书二维码及昵称 `@霸天土小豆`，部署配置可替换二维码和账号信息。
+分享图片用于把个股分析和市场复盘转换为适合社交平台传播的 1080px 长图。个股和大盘使用两套独立的信息结构，但共用 MIUSIAI 品牌（顶部品牌栏与底部品牌标题，由 `src/share_image.py` 中的 `PROJECT_BRAND_NAME` 定义）和风险声明。底部的项目地址与小红书区域默认都不显示，仓库也不再内置任何二维码或昵称；只有部署方自行配置后才会渲染对应内容。
 
 ## 运行时如何填充
 
@@ -25,15 +25,22 @@
 分享图需要运行环境提供对应语言字体。官方 Docker 镜像已内置 Noto CJK 字体；Debian/Ubuntu 源码部署使用默认 `wkhtmltoimage` 引擎时，应安装 `wkhtmltopdf fonts-noto-cjk`。如果只安装转图工具而缺少 CJK 字体，中文或韩文可能在 PNG 中消失，只剩数字、英文和边框。
 `fonts-noto-cjk` 是 Debian 字体包名，不代表新增日文报告语言。项目的报告输出仍只支持 `REPORT_LANGUAGE=zh|en|ko`；日股个股和日本市场复盘中的日文原生名称由通用 Noto CJK fallback 覆盖，页面语言仍跟随所选报告语言，不会根据 `7203.T` 或 `region=jp` 切换成未支持的 `ja` 输出。
 
-小红书品牌使用以下可选配置。全部留空时展示仓库内置二维码及昵称 `@霸天土小豆`；配置任一自定义值后仅使用这组自定义品牌信息，避免把自定义账号与默认二维码混合：
+底部品牌区使用以下可选配置，默认全部为空。分享图（Web / 桌面端）与通知推送图（企业微信、Telegram 等转图渠道）共用同一模板，两处行为一致：
 
 ```dotenv
+# 项目地址：留空时不显示任何地址及“项目地址”标签；仅接受 http:// 或 https://
+SHARE_IMAGE_REPO_URL=https://github.com/your-name/your-repo
+# 小红书：三项全部留空时不显示小红书区域；只填部分时只显示已填写的内容
 SHARE_IMAGE_XIAOHONGSHU_URL=https://example.com/my-xiaohongshu
 SHARE_IMAGE_XIAOHONGSHU_HANDLE=@我的账号
 SHARE_IMAGE_XIAOHONGSHU_QR_PATH=assets/my-xiaohongshu-qr.png
 ```
 
-二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。账号 URL 只接受 `http://` 或 `https://`。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。未配置 `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` 时，统一回退到随源码和桌面包分发的 `src/assets/share_image/xiaohongshu_qr.jpg`，因此 Web PNG 与桌面 Electron PNG 都会保留二维码。二维码下方固定显示小红书昵称，例如 `小红书@霸天土小豆`；历史配置中的数字 ID 不参与分享图渲染。
+- `SHARE_IMAGE_REPO_URL` 填写后显示为“项目地址”（英文 / 韩文报告为 `Project` / `프로젝트`）加去掉协议头的地址；地址属于 `github.com` 时附带 GitHub 图标。非 `http(s)://` 的值会被忽略并记录 warning。
+- 只填 `SHARE_IMAGE_XIAOHONGSHU_HANDLE` 时只显示“小红书@昵称”，不显示二维码；只填二维码路径时只显示二维码；填写 URL 时昵称与二维码会链接到该地址（URL 只接受 `http://` 或 `https://`）。
+- 二维码路径支持绝对路径或相对项目根目录路径；冻结桌面后端也会从 PyInstaller 资源目录解析相对路径。文件不存在或不可读时记录 warning 并省略二维码，不会导致分享图生成失败。二维码在转图时以内嵌 Data URI 渲染，不依赖运行时网络。历史配置中的数字 ID（`SHARE_IMAGE_XIAOHONGSHU_ID`）不参与分享图渲染。
+- 项目地址与小红书区域都未配置时，底部只保留 MIUSIAI 品牌标题、标语和风险提示，品牌标题占满整行，不留空白占位。
+- 以上配置目前只能通过 `.env` / 环境变量设置，Web 设置页不提供对应表单。
 
 ## Web 一键分享
 
@@ -130,6 +137,7 @@ from src.share_image import ShareImageBranding, build_share_image_html
 
 markdown_text = Path("reports/example.md").read_text(encoding="utf-8")
 branding = ShareImageBranding(
+    repo_url="https://github.com/your-name/your-repo",
     xiaohongshu_url="https://example.com/my-xiaohongshu",
     xiaohongshu_handle="@我的账号",
     xiaohongshu_qr_path="assets/my-xiaohongshu-qr.png",
@@ -166,6 +174,6 @@ png_bytes = markdown_to_image(
 - 分享图中的买入、止损和目标只保留可扫描的价格或“等待企稳”；完整条件始终保留在原报告中。
 - 没有真实价格序列时不绘制伪 K 线；顶部仅保留非数据化的品牌光晕。
 - 顶部品牌栏显示 `MIUSIAI | AI 股票分析`（英文 / 韩文报告分别为 `AI Stock Analysis` / `AI 주식 분석`），底部品牌标题显示 `MIUSIAI 股票智能分析系统`；品牌名为固定文案，不提供配置项。
-- 小红书 URL、昵称和二维码路径可由运行时配置覆盖；二维码下只显示昵称，不显示数字 ID。全部留空时使用内置昵称 `@霸天土小豆` 和仓库内置二维码。GitHub 固定展示仓库标识 `ZhuLinsen/daily_stock_analysis`，不生成二维码，目前没有配置项可覆盖或隐藏。运行时配置三项 `SHARE_IMAGE_XIAOHONGSHU_*` 全部留空时会回退到内置昵称与二维码，因此目前也没有通过配置隐藏小红书区域的方式（只有直接调用 `build_share_image_html` 且不传 `branding` 时才会省略）。
+- 项目地址（`SHARE_IMAGE_REPO_URL`）与小红书 URL、昵称、二维码路径（`SHARE_IMAGE_XIAOHONGSHU_*`）均为可选运行时配置，默认全部为空、底部不显示；二维码下只显示昵称，不显示数字 ID。仓库不内置任何项目地址、二维码或昵称兜底。
 - 大盘报告在核心模块已成功提取时不重复附加完整 Markdown；额外的详情章节保留在原报告中，分享图只呈现结构化摘要。
 - 图片底部固定说明“AI 生成，仅供研究交流，不构成投资建议”。

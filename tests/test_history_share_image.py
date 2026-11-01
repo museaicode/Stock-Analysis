@@ -9,7 +9,7 @@ from PIL import Image
 from fastapi import HTTPException
 
 from api.v1.endpoints import history as history_endpoint
-from src.share_image import DEFAULT_XIAOHONGSHU_HANDLE, DEFAULT_XIAOHONGSHU_QR_PATH
+from src.share_image import ShareImageBranding
 
 
 class _FakeHistoryService:
@@ -196,13 +196,61 @@ def test_history_share_image_html_returns_desktop_poster_with_restrictive_csp(mo
     assert response.media_type == "text/html"
     assert b"poster" in response.body
     assert captured["structured_payload"] is raw_result
-    assert captured["branding"].xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
-    assert captured["branding"].xiaohongshu_id == ""
-    assert captured["branding"].xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    assert captured["branding"] == ShareImageBranding()
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["content-security-policy"] == (
         "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
     )
+
+
+def test_history_share_image_html_default_poster_has_no_upstream_branding(monkeypatch):
+    _patch_service(
+        monkeypatch,
+        {
+            "id": 22,
+            "report_type": "detailed",
+            "raw_result": {"code": "000657", "name": "中钨高新", "dashboard": {}},
+            "context_snapshot": {},
+        },
+    )
+
+    response = history_endpoint.get_history_share_image_html("22", db_manager=object())
+    body = response.body.decode("utf-8")
+
+    assert response.status_code == 200
+    assert "ZhuLinsen/daily_stock_analysis" not in body
+    assert "霸天土小豆" not in body
+    assert "data:image" not in body
+    assert 'class="repo-line"' not in body
+    assert 'class="qr-' not in body
+    assert "仅供研究交流，不构成投资建议" in body
+
+
+def test_history_share_image_html_renders_configured_repo_and_handle(monkeypatch):
+    _patch_service(
+        monkeypatch,
+        {
+            "id": 23,
+            "report_type": "detailed",
+            "raw_result": {"code": "000657", "name": "中钨高新", "dashboard": {}},
+            "context_snapshot": {},
+        },
+    )
+    monkeypatch.setattr(
+        history_endpoint,
+        "get_config",
+        lambda: SimpleNamespace(
+            markdown_to_image_max_chars=15000,
+            share_image_repo_url="https://github.com/example/my-fork",
+            share_image_xiaohongshu_handle="@我的账号",
+        ),
+    )
+
+    body = history_endpoint.get_history_share_image_html("23", db_manager=object()).body.decode("utf-8")
+
+    assert "github.com/example/my-fork" in body
+    assert "<b>小红书</b>@我的账号" in body
+    assert 'class="qr-frame"' not in body
 
 
 def test_history_share_image_html_rejects_reports_over_configured_limit(monkeypatch):

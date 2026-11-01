@@ -7,32 +7,51 @@ from types import SimpleNamespace
 import pytest
 
 from src.share_image import (
-    DEFAULT_XIAOHONGSHU_HANDLE,
-    DEFAULT_XIAOHONGSHU_QR_PATH,
     PROJECT_BRAND_NAME,
     PROJECT_DISPLAY_NAME,
-    PROJECT_REPOSITORY,
     ShareImageBranding,
     build_share_image_html,
     share_image_branding_from_config,
 )
 
 XIAOHONGSHU_HANDLE = "@示例账号"
-XIAOHONGSHU_BRANDING = ShareImageBranding(
-    xiaohongshu_url="https://example.com/xiaohongshu",
-    xiaohongshu_handle=XIAOHONGSHU_HANDLE,
-    xiaohongshu_id="123456",
-    xiaohongshu_qr_path=str(
-        Path(__file__).parents[1] / "src" / "assets" / "share_image" / "xiaohongshu_qr.jpg"
-    ),
-)
+STOCK_MARKDOWN = "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n"
+# Former hard-coded upstream branding that must never be rendered by default.
+UPSTREAM_REPOSITORY = "ZhuLinsen/daily_stock_analysis"
+UPSTREAM_HANDLE = "霸天土小豆"
+DISCLAIMER_ZH = "仅供研究交流，不构成投资建议"
 
 
-def test_stock_share_image_uses_configured_xiaohongshu_branding():
+@pytest.fixture
+def qr_file(tmp_path: Path) -> Path:
+    path = tmp_path / "my-xhs-qr.jpg"
+    path.write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+    return path
+
+
+def _assert_no_upstream_branding(html: str) -> None:
+    assert UPSTREAM_REPOSITORY not in html
+    assert "github.com" not in html
+    assert UPSTREAM_HANDLE not in html
+    assert "data:image" not in html
+    assert 'class="qr-' not in html
+    assert 'class="repo-line"' not in html
+    assert "项目地址" not in html
+    assert "GitHub" not in html
+    assert DISCLAIMER_ZH in html
+    assert 'class="footer-brand full"' in html
+
+
+def test_stock_share_image_uses_configured_xiaohongshu_branding(qr_file):
     html = build_share_image_html(
-        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
+        STOCK_MARKDOWN,
         generated_on=date(2026, 7, 31),
-        branding=XIAOHONGSHU_BRANDING,
+        branding=ShareImageBranding(
+            xiaohongshu_url="https://example.com/xiaohongshu",
+            xiaohongshu_handle=XIAOHONGSHU_HANDLE,
+            xiaohongshu_id="123456",
+            xiaohongshu_qr_path=str(qr_file),
+        ),
     )
 
     assert 'class="poster stock"' in html
@@ -43,7 +62,8 @@ def test_stock_share_image_uses_configured_xiaohongshu_branding():
     assert html.count("data:image/jpeg;base64,") == 1
     assert "项目主页二维码" not in html
     assert "GitHub 项目" not in html
-    assert PROJECT_REPOSITORY in html
+    assert UPSTREAM_REPOSITORY not in html
+    assert 'class="repo-line"' not in html
     assert "小红书二维码" in html
     assert PROJECT_DISPLAY_NAME in html
     assert PROJECT_BRAND_NAME == "MIUSIAI"
@@ -67,25 +87,90 @@ def test_stock_share_image_omits_unconfigured_social_account():
     assert 'class="footer-brand full"' in html
 
 
-def test_runtime_branding_defaults_to_bundled_xiaohongshu_qr():
+def test_runtime_branding_defaults_to_no_branding():
     branding = share_image_branding_from_config(object())
 
-    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
-    assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
-    html = build_share_image_html(
-        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
-        generated_on=date(2026, 7, 31),
-        branding=branding,
+    assert branding == ShareImageBranding()
+    html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
+
+    _assert_no_upstream_branding(html)
+    assert "小红书" not in html
+
+
+@pytest.mark.parametrize("language_markdown,disclaimer", [
+    (STOCK_MARKDOWN, DISCLAIMER_ZH),
+    ("# Apple AAPL Analysis Report\n\n## Core Conclusion\n\n- Bullish trend\n", "not investment advice"),
+])
+def test_default_footer_keeps_disclaimer_without_brand_extras(language_markdown, disclaimer):
+    html = build_share_image_html(language_markdown, generated_on=date(2026, 7, 31))
+
+    assert disclaimer in html
+    assert UPSTREAM_REPOSITORY not in html
+    assert UPSTREAM_HANDLE not in html
+    assert 'class="repo-line"' not in html
+    assert 'class="qr-card' not in html
+    assert 'class="footer-brand full"' in html
+
+
+def test_runtime_branding_renders_configured_repo_url():
+    branding = share_image_branding_from_config(
+        SimpleNamespace(share_image_repo_url="  https://github.com/example/my-fork/  ")
     )
 
-    assert html.count('class="qr-frame"') == 1
-    assert html.count("data:image/jpeg;base64,") == 1
-    assert f"<b>小红书</b>{DEFAULT_XIAOHONGSHU_HANDLE}" in html
-    assert " ID " not in html
+    assert branding.repo_url == "https://github.com/example/my-fork/"
+    html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
+
+    assert '<a class="repo-line" href="https://github.com/example/my-fork/">' in html
+    assert "<em>项目地址</em><b>github.com/example/my-fork</b>" in html
+    assert "<svg" in html.split('class="repo-line"', 1)[1].split("</a>", 1)[0]
+    assert UPSTREAM_REPOSITORY not in html
+    assert UPSTREAM_HANDLE not in html
+    assert 'class="qr-card' not in html
+    assert DISCLAIMER_ZH in html
 
 
-def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
+def test_repo_url_for_non_github_host_omits_github_icon():
+    html = build_share_image_html(
+        STOCK_MARKDOWN,
+        branding=ShareImageBranding(repo_url="https://gitee.com/example/project"),
+    )
+
+    line = html.split('class="repo-line"', 1)[1].split("</a>", 1)[0]
+    assert "<b>gitee.com/example/project</b>" in line
+    assert "<svg" not in line
+
+
+def test_unsafe_repo_url_is_ignored_with_warning(caplog):
+    with caplog.at_level("WARNING", logger="src.share_image"):
+        html = build_share_image_html(
+            STOCK_MARKDOWN,
+            branding=ShareImageBranding(repo_url="javascript:alert(1)"),
+        )
+
+    assert "javascript:" not in html
+    assert 'class="repo-line"' not in html
+    assert "SHARE_IMAGE_REPO_URL" in caplog.text
+
+
+def test_runtime_branding_with_only_handle_renders_handle_only():
+    branding = share_image_branding_from_config(
+        SimpleNamespace(share_image_xiaohongshu_handle="@自定义账号")
+    )
+
+    assert branding.xiaohongshu_qr_path == ""
+    assert branding.xiaohongshu_url == ""
+    html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
+
+    assert '<div class="qr-card text-only"><span><b>小红书</b>@自定义账号</span></div>' in html
+    assert 'class="qr-frame"' not in html
+    assert "data:image" not in html
+    assert 'class="social-link"' not in html
+    assert 'class="repo-line"' not in html
+    assert UPSTREAM_HANDLE not in html
+    assert DISCLAIMER_ZH in html
+
+
+def test_runtime_branding_with_handle_and_url_links_without_qr():
     branding = share_image_branding_from_config(
         SimpleNamespace(
             share_image_xiaohongshu_url="https://example.com/custom",
@@ -96,68 +181,64 @@ def test_runtime_branding_does_not_mix_default_qr_with_custom_identity():
 
     assert branding.xiaohongshu_id == "custom-id"
     assert branding.xiaohongshu_qr_path == ""
-
-    html = build_share_image_html(
-        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
-        generated_on=date(2026, 7, 31),
-        branding=branding,
-    )
+    html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
 
     assert "<b>小红书</b>@自定义账号" in html
-    assert "custom-id" not in html
-    assert "data:image/jpeg;base64," not in html
-    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
-
-
-def test_runtime_branding_does_not_mix_default_pair_with_custom_handle_or_url():
-    branding = share_image_branding_from_config(
-        SimpleNamespace(
-            share_image_xiaohongshu_url="https://example.com/custom",
-            share_image_xiaohongshu_handle="@自定义账号",
-        )
-    )
-
-    assert branding.xiaohongshu_handle == "@自定义账号"
-    assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == ""
-
-    html = build_share_image_html(
-        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
-        generated_on=date(2026, 7, 31),
-        branding=branding,
-    )
-
-    assert "@自定义账号" in html
     assert 'href="https://example.com/custom"' in html
-    assert "data:image/jpeg;base64," not in html
-    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
+    assert "custom-id" not in html
+    assert "data:image" not in html
+    assert UPSTREAM_HANDLE not in html
 
 
-def test_runtime_branding_does_not_mix_default_handle_with_custom_qr():
+def test_runtime_branding_with_only_qr_renders_qr_without_default_handle(qr_file):
+    branding = share_image_branding_from_config(
+        SimpleNamespace(share_image_xiaohongshu_qr_path=str(qr_file))
+    )
+
+    html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
+
+    assert html.count('class="qr-frame"') == 1
+    assert html.count("data:image/jpeg;base64,") == 1
+    assert UPSTREAM_HANDLE not in html
+
+
+def test_missing_qr_file_logs_warning_and_omits_qr(tmp_path, caplog):
+    missing = tmp_path / "does-not-exist.png"
     branding = share_image_branding_from_config(
         SimpleNamespace(
-            share_image_xiaohongshu_qr_path=str(
-                Path(__file__).parents[1] / "src" / "assets" / "share_image" / "xiaohongshu_qr.jpg"
-            ),
+            share_image_xiaohongshu_handle="@自定义账号",
+            share_image_xiaohongshu_qr_path=str(missing),
         )
     )
 
-    assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path
+    with caplog.at_level("WARNING", logger="src.share_image"):
+        html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
 
-    html = build_share_image_html(
-        "# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多\n",
-        generated_on=date(2026, 7, 31),
-        branding=branding,
-    )
+    assert "<b>小红书</b>@自定义账号" in html
+    assert 'class="qr-frame"' not in html
+    assert "data:image" not in html
+    assert 'class="qr-card text-only"' in html
+    assert str(missing) in caplog.text
+    assert DISCLAIMER_ZH in html
 
-    assert html.count("data:image/jpeg;base64,") == 1
-    assert DEFAULT_XIAOHONGSHU_HANDLE not in html
+
+def test_missing_qr_file_alone_hides_qr_without_failing(tmp_path, caplog):
+    branding = ShareImageBranding(xiaohongshu_qr_path=str(tmp_path / "missing.jpg"))
+
+    with caplog.at_level("WARNING", logger="src.share_image"):
+        html = build_share_image_html(STOCK_MARKDOWN, generated_on=date(2026, 7, 31), branding=branding)
+
+    assert 'class="qr-frame"' not in html
+    assert "data:image" not in html
+    assert UPSTREAM_HANDLE not in html
+    assert DISCLAIMER_ZH in html
+    assert "missing.jpg" in caplog.text
 
 
 def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
     branding = share_image_branding_from_config(
         SimpleNamespace(
+            share_image_repo_url="  ",
             share_image_xiaohongshu_url="  ",
             share_image_xiaohongshu_handle="  ",
             share_image_xiaohongshu_id="  ",
@@ -165,9 +246,8 @@ def test_runtime_branding_treats_whitespace_only_values_as_unconfigured():
         )
     )
 
-    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
-    assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    assert branding == ShareImageBranding()
+    assert not branding.has_xiaohongshu
 
 
 def test_stock_share_image_does_not_link_unsafe_social_url():
@@ -1966,11 +2046,15 @@ def test_brief_aggregate_report_without_single_stock_heading_uses_generic_poster
     assert "Buy leaders on pullbacks." in html
 
 
-def test_desktop_backend_build_scripts_bundle_share_image_assets():
+def test_repository_no_longer_bundles_upstream_share_image_branding():
     root = Path(__file__).resolve().parents[1]
+    assert not (root / "src" / "assets" / "share_image" / "xiaohongshu_qr.jpg").exists()
     for relative_path in ("scripts/build-backend.ps1", "scripts/build-backend-macos.sh"):
         content = (root / relative_path).read_text(encoding="utf-8")
-        assert "src/assets/share_image" in content
+        assert "src/assets/share_image" not in content
+    source = (root / "src" / "share_image.py").read_text(encoding="utf-8")
+    assert UPSTREAM_REPOSITORY not in source
+    assert UPSTREAM_HANDLE not in source
 
 
 def test_share_image_declares_supported_cjk_fonts_and_docker_installs_them():

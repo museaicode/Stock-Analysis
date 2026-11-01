@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 分享图与企业微信等推送图底部默认不再显示原项目 GitHub 仓库地址和原作者小红书二维码/昵称，并移除仓库内置二维码图片；如需展示自己的信息，在 `.env` 配置新增的 `SHARE_IMAGE_REPO_URL`（项目地址）及 `SHARE_IMAGE_XIAOHONGSHU_URL` / `_HANDLE` / `_QR_PATH`（只填部分时只显示已填内容，二维码文件缺失时记录 warning 并省略），风险提示保持不变，详见 `docs/share-images.md`。
 - [新功能] 新增可选的 fastapi-guard 安全中间件（`GUARD_ENABLED=true`，默认关闭）：按 IP 限流、IP 白/黑名单、请求特征拦截与扫描器自动封禁，与登录失败限流叠加；客户端 IP 取值与 `TRUST_X_FORWARDED_FOR` 保持一致，启用后内置启动入口的 Uvicorn 代理头处理只信任同一组代理，默认不扫描请求体，详见 `docs/full-guide.md`。
 - [修复] Telegram 推送按 UTF-16 长度判断与分段，修复含大量 emoji 的报告超出 4096 限制导致发送失败的问题。
 - [修复] 企业微信报告长图超过 2MB 时不再直接回退为分段文字：先转 JPEG（quality 85/75/65），仍超限则保持原宽度竖向切分为最多 6 张、间隔约 1 秒逐张发送；需要超过 6 张或任意一张发送失败时才回退为 Markdown 分段文字，其他渠道行为不变。

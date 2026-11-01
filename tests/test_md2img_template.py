@@ -11,21 +11,17 @@ from src.md2img import (
     _markdown_to_image_wkhtml,
     markdown_to_image,
 )
-from src.share_image import (
-    DEFAULT_XIAOHONGSHU_HANDLE,
-    DEFAULT_XIAOHONGSHU_QR_PATH,
-    ShareImageBranding,
-)
+from src.share_image import ShareImageBranding
 
 
 TEST_BRANDING = ShareImageBranding(
+    repo_url="https://github.com/example/my-fork",
     xiaohongshu_url="https://example.com/xhs",
     xiaohongshu_handle="@示例账号",
     xiaohongshu_id="123456",
-    xiaohongshu_qr_path=str(
-        Path(__file__).parents[1] / "src" / "assets" / "share_image" / "xiaohongshu_qr.jpg"
-    ),
 )
+UPSTREAM_REPOSITORY = "ZhuLinsen/daily_stock_analysis"
+UPSTREAM_HANDLE = "霸天土小豆"
 
 
 def test_wkhtml_renderer_uses_share_poster_dimensions_and_qr_template():
@@ -40,7 +36,8 @@ def test_wkhtml_renderer_uses_share_poster_dimensions_and_qr_template():
     assert output is False
     assert 'class="poster market"' in html
     assert "项目主页二维码" not in html
-    assert "ZhuLinsen/daily_stock_analysis" in html
+    assert "github.com/example/my-fork" in html
+    assert UPSTREAM_REPOSITORY not in html
     assert "<b>小红书</b>@示例账号" in html
     assert "123456" not in html
     assert options["width"] == 1080
@@ -69,7 +66,8 @@ def test_markdown_to_file_renderer_receives_the_same_share_poster(tmp_path, monk
     assert captured["command"] == resolved_m2f
     assert 'class="poster stock"' in captured["html"]
     assert "项目主页二维码" not in captured["html"]
-    assert "ZhuLinsen/daily_stock_analysis" in captured["html"]
+    assert "github.com/example/my-fork" in captured["html"]
+    assert UPSTREAM_REPOSITORY not in captured["html"]
     assert "<b>小红书</b>@示例账号" in captured["html"]
     assert "123456" not in captured["html"]
 
@@ -103,7 +101,8 @@ def test_playwright_renderer_receives_the_same_share_poster(tmp_path, monkeypatc
     ]
     assert "--full-page" in captured["args"]
     assert 'class="poster stock"' in captured["html"]
-    assert "ZhuLinsen/daily_stock_analysis" in captured["html"]
+    assert "github.com/example/my-fork" in captured["html"]
+    assert UPSTREAM_REPOSITORY not in captured["html"]
     assert "<b>小红书</b>@示例账号" in captured["html"]
     assert "123456" not in captured["html"]
 
@@ -115,6 +114,7 @@ def test_config_accepts_playwright_image_engine():
 def test_markdown_to_image_forwards_social_branding_from_config():
     config = SimpleNamespace(
         md2img_engine="wkhtmltoimage",
+        share_image_repo_url="https://github.com/example/my-fork",
         share_image_xiaohongshu_url="https://example.com/xhs",
         share_image_xiaohongshu_handle="@自定义账号",
         share_image_xiaohongshu_id="987654",
@@ -128,6 +128,7 @@ def test_markdown_to_image_forwards_social_branding_from_config():
 
     branding = render.call_args.args[2]
     assert branding == ShareImageBranding(
+        repo_url="https://github.com/example/my-fork",
         xiaohongshu_url="https://example.com/xhs",
         xiaohongshu_handle="@自定义账号",
         xiaohongshu_id="987654",
@@ -135,7 +136,7 @@ def test_markdown_to_image_forwards_social_branding_from_config():
     )
 
 
-def test_markdown_to_image_uses_bundled_qr_when_branding_is_unconfigured():
+def test_markdown_to_image_uses_empty_branding_when_unconfigured():
     config = SimpleNamespace(md2img_engine="wkhtmltoimage")
     with (
         patch("src.config.get_config", return_value=config),
@@ -143,10 +144,40 @@ def test_markdown_to_image_uses_bundled_qr_when_branding_is_unconfigured():
     ):
         assert markdown_to_image("# 大盘复盘") == b"png"
 
-    branding = render.call_args.args[2]
-    assert branding.xiaohongshu_handle == DEFAULT_XIAOHONGSHU_HANDLE
-    assert branding.xiaohongshu_id == ""
-    assert branding.xiaohongshu_qr_path == DEFAULT_XIAOHONGSHU_QR_PATH
+    assert render.call_args.args[2] == ShareImageBranding()
+
+
+def _assert_poster_has_no_upstream_branding(html: str) -> None:
+    assert 'class="poster' in html
+    assert UPSTREAM_REPOSITORY not in html
+    assert "github.com" not in html
+    assert UPSTREAM_HANDLE not in html
+    assert "data:image" not in html
+    assert 'class="qr-' not in html
+    assert 'class="repo-line"' not in html
+    assert "仅供研究交流，不构成投资建议" in html
+
+
+def test_markdown_to_image_default_poster_html_has_no_upstream_branding():
+    """WeChat/Telegram image pushes render through markdown_to_image -> wkhtml."""
+    config = SimpleNamespace(md2img_engine="wkhtmltoimage")
+    with (
+        patch("src.config.get_config", return_value=config),
+        patch("imgkit.from_string", return_value=b"png") as render,
+    ):
+        assert markdown_to_image("# 贵州茅台 600519 分析报告\n\n## 核心判断\n\n- 趋势偏多") == b"png"
+
+    _assert_poster_has_no_upstream_branding(render.call_args.args[0])
+
+
+def test_markdown_to_image_falls_back_to_empty_branding_when_config_fails():
+    with (
+        patch("src.config.get_config", side_effect=RuntimeError("boom")),
+        patch("imgkit.from_string", return_value=b"png") as render,
+    ):
+        assert markdown_to_image("# 大盘复盘\n\n## 结论\n\n震荡") == b"png"
+
+    _assert_poster_has_no_upstream_branding(render.call_args.args[0])
 
 
 def test_wkhtml_renderer_forwards_structured_analysis_payload():

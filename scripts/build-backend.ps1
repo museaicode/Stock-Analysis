@@ -140,7 +140,6 @@ $pyInstallerArgs = @(
   '--runtime-hook', $runtimeHook,
   '--add-data', 'static;static',
   '--add-data', 'strategies;strategies',
-  '--add-data', 'src/assets/share_image;src/assets/share_image',
   '--collect-data', 'litellm',
   '--collect-data', 'tiktoken',
   '--collect-data', 'akshare',

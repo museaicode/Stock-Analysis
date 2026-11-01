@@ -140,9 +140,10 @@ daily_stock_analysis/
 | `NOTIFICATION_DAILY_DIGEST_ENABLED` | 每日摘要预留开关；当前不会发送摘要或持久化摘要内容 | 可选 |
 | `MARKDOWN_TO_IMAGE_MAX_CHARS` | 超过此长度不转图片，避免超大图片（默认 15000） | 可选 |
 | `MD2IMG_ENGINE` | 转图引擎：`wkhtmltoimage`（默认）、`markdown-to-file` 或 `playwright`（需安装 Web 依赖与 Chromium） | 可选 |
-| `SHARE_IMAGE_XIAOHONGSHU_URL` | 分享图小红书主页 URL；留空可不显示链接 | 可选 |
-| `SHARE_IMAGE_XIAOHONGSHU_HANDLE` | 分享图小红书昵称；全部小红书配置留空时显示内置昵称 `@霸天土小豆` | 可选 |
-| `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` | 分享图小红书二维码文件路径；支持绝对路径或相对项目根目录，全部小红书配置留空时使用仓库内置二维码 | 可选 |
+| `SHARE_IMAGE_REPO_URL` | 分享图 / 推送图底部显示的项目地址（`http(s)://`）；默认为空，留空不显示任何地址及标签 | 可选 |
+| `SHARE_IMAGE_XIAOHONGSHU_URL` | 分享图小红书主页 URL；留空不加链接 | 可选 |
+| `SHARE_IMAGE_XIAOHONGSHU_HANDLE` | 分享图小红书昵称；只填昵称时只显示昵称。三项小红书配置全部留空时不显示小红书区域 | 可选 |
+| `SHARE_IMAGE_XIAOHONGSHU_QR_PATH` | 分享图小红书二维码文件路径；支持绝对路径或相对项目根目录，文件不存在时记录 warning 并省略二维码 | 可选 |
 | `PREFETCH_REALTIME_QUOTES` | 设为 `false` 可禁用实时行情预取，避免 efinance/akshare_em 全市场拉取（默认 true） | 可选 |
 
 > 兼容性说明：`REPORT_SHOW_LLM_MODEL` 维持默认 `true` 的原始展示语义，关闭时只影响底部模型文案输出。该配置不会变更 provider/model/Base URL、LiteLLM 路由、模型保存、迁移或清理语义；回退方式为恢复或删除该变量，并设为 `true`。

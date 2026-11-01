@@ -1273,6 +1273,7 @@ class Config:
     markdown_to_image_channels: List[str] = field(default_factory=list)  # 逗号分隔：telegram,wechat,custom,email
     markdown_to_image_max_chars: int = 15000  # 超过此长度不转换，避免超大图片
     md2img_engine: str = "wkhtmltoimage"  # wkhtmltoimage | markdown-to-file | playwright
+    share_image_repo_url: Optional[str] = None  # 分享图底部项目地址；留空不显示
     share_image_xiaohongshu_url: Optional[str] = None
     share_image_xiaohongshu_handle: Optional[str] = None
     share_image_xiaohongshu_id: Optional[str] = None
@@ -2278,6 +2279,7 @@ class Config:
                 minimum=1,
             ),
             md2img_engine=cls._parse_md2img_engine(os.getenv('MD2IMG_ENGINE', 'wkhtmltoimage')),
+            share_image_repo_url=(os.getenv('SHARE_IMAGE_REPO_URL') or '').strip() or None,
             share_image_xiaohongshu_url=(os.getenv('SHARE_IMAGE_XIAOHONGSHU_URL') or '').strip() or None,
             share_image_xiaohongshu_handle=(os.getenv('SHARE_IMAGE_XIAOHONGSHU_HANDLE') or '').strip() or None,
             share_image_xiaohongshu_id=(os.getenv('SHARE_IMAGE_XIAOHONGSHU_ID') or '').strip() or None,
