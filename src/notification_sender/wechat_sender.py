@@ -24,6 +24,7 @@ from src.utils.image_compress import (
     relaxed_pil_pixel_limit,
     to_rgb,
 )
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -225,7 +226,7 @@ class WechatSender:
         try:
             return self._send_wechat_message(sanitized_content, timeout_seconds=timeout_seconds)
         except Exception as e:
-            logger.error(f"发送企业微信消息失败: {e}")
+            logger.error(f"发送企业微信消息失败: {redact_log_text(e)}")
             return False
 
     def _send_wechat_image(self, image_bytes: bytes) -> bool:
@@ -258,7 +259,7 @@ class WechatSender:
                 logger.error("企业微信请求失败: HTTP %s", response.status_code)
             return False
         except Exception as e:
-            logger.error("企业微信图片发送异常: %s", e)
+            logger.error("企业微信图片发送异常: %s", redact_log_text(e))
             return False
     
     def _send_wechat_report_image(self, image_bytes: bytes, *, fallback_content: str) -> bool:

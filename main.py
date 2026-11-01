@@ -89,7 +89,11 @@ from datetime import date, datetime, timezone, timedelta
 
 from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
-from src.logging_config import setup_logging
+from src.logging_config import (
+    install_sensitive_data_filter,
+    install_sensitive_data_filter_on_root,
+    setup_logging,
+)
 from src.brokers.futu.portfolio import FutuPortfolioError
 from src.core.analysis_run_marker import (
     record_analysis_run_marker,
@@ -216,6 +220,7 @@ def _setup_bootstrap_logging(debug: bool = False) -> None:
         handler.setFormatter(
             logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
         )
+        install_sensitive_data_filter(handler)
         root.addHandler(handler)
 
 
@@ -1695,6 +1700,7 @@ def main() -> int:
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             stream=sys.stderr,
         )
+        install_sensitive_data_filter_on_root()
         logger.warning("Bootstrap 日志初始化失败，已回退到 stderr: %s", exc)
 
     # 加载配置（在 bootstrap logging 之后执行，确保异常有日志）

@@ -12,6 +12,7 @@ import requests
 
 from src.config import Config
 from src.formatters import strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ class NtfySender:
                 return True
 
             logger.error("ntfy 请求失败: HTTP %s", response.status_code)
-            logger.debug("ntfy 响应内容: %s", response.text)
+            logger.debug("ntfy 响应内容: %s", redact_log_text(response.text))
             return False
         except requests.exceptions.Timeout:
             logger.error("发送 ntfy 消息失败: 请求超时")

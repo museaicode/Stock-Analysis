@@ -18,6 +18,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from src.utils.sanitize import redact_log_text
+
 
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(pathname)s:%(lineno)d | %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -47,6 +49,52 @@ class RelativePathFormatter(logging.Formatter):
             pass
         return super().format(record)
 
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Globally redact secrets from log messages and exception text.
+
+    Masks Telegram ``/bot<token>/`` segments, credential query parameters
+    (key / token / access_token / sendkey …), webhook URLs (WeCom, DingTalk,
+    Feishu, Slack, Discord, Server酱 …), bearer/authorization headers and
+    ``token=…`` style assignments. Attached to every handler (handler-level
+    filters also see records propagated from child loggers).
+    """
+
+    _exc_formatter = logging.Formatter()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+            redacted = redact_log_text(message)
+            if redacted != message:
+                record.msg = redacted
+                record.args = None
+            if record.exc_info and not record.exc_text:
+                record.exc_text = self._exc_formatter.formatException(record.exc_info)
+            if record.exc_text:
+                record.exc_text = redact_log_text(record.exc_text)
+            if record.stack_info:
+                record.stack_info = redact_log_text(record.stack_info)
+        except Exception:  # noqa: BLE001 - logging must never fail because of redaction.
+            pass
+        return True
+
+
+_SENSITIVE_DATA_FILTER = SensitiveDataFilter()
+
+
+def install_sensitive_data_filter(handler: logging.Handler) -> logging.Handler:
+    """Attach the shared redaction filter to ``handler`` (idempotent)."""
+    if not any(isinstance(existing, SensitiveDataFilter) for existing in handler.filters):
+        handler.addFilter(_SENSITIVE_DATA_FILTER)
+    return handler
+
+
+def install_sensitive_data_filter_on_root() -> None:
+    """Attach the redaction filter to every handler currently on the root logger."""
+    for handler in logging.getLogger().handlers:
+        install_sensitive_data_filter(handler)
 
 
 # 默认需要降低日志级别的第三方库
@@ -133,6 +181,7 @@ def setup_logging(
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(rel_formatter)
+    install_sensitive_data_filter(console_handler)
     root_logger.addHandler(console_handler)
 
     # Handler 2: 常规日志文件（INFO 级别，10MB 轮转）
@@ -144,6 +193,7 @@ def setup_logging(
     )
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(rel_formatter)
+    install_sensitive_data_filter(file_handler)
     root_logger.addHandler(file_handler)
 
     # Handler 3: 调试日志文件（DEBUG 级别，包含所有详细信息）
@@ -155,6 +205,7 @@ def setup_logging(
     )
     debug_handler.setLevel(logging.DEBUG)
     debug_handler.setFormatter(rel_formatter)
+    install_sensitive_data_filter(debug_handler)
     root_logger.addHandler(debug_handler)
 
     # 降低第三方库的日志级别

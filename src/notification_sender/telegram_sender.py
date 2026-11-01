@@ -14,6 +14,7 @@ import re
 
 from src.config import Config
 from src.formatters import _custom_unit_to_index, strip_hidden_markdown_metadata, utf16_len
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -113,9 +114,9 @@ class TelegramSender:
                 )
 
         except Exception as e:
-            logger.error(f"发送 Telegram 消息失败: {e}")
+            logger.error(f"发送 Telegram 消息失败: {redact_log_text(e)}")
             import traceback
-            logger.debug(traceback.format_exc())
+            logger.debug(redact_log_text(traceback.format_exc()))
             return False
 
     def _send_telegram_message(
@@ -149,12 +150,12 @@ class TelegramSender:
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 if attempt < max_retries:
                     delay = 2 ** attempt  # 2s, 4s
-                    logger.warning(f"Telegram request failed (attempt {attempt}/{max_retries}): {e}, "
+                    logger.warning(f"Telegram request failed (attempt {attempt}/{max_retries}): {redact_log_text(e)}, "
                                    f"retrying in {delay}s...")
                     time.sleep(delay)
                     continue
                 else:
-                    logger.error(f"Telegram request failed after {max_retries} attempts: {e}")
+                    logger.error(f"Telegram request failed after {max_retries} attempts: {redact_log_text(e)}")
                     return False
 
             if response.status_code == 200:
@@ -194,7 +195,7 @@ class TelegramSender:
                     if self._send_plain_text_fallback(api_url, payload, text, timeout_seconds=timeout_seconds):
                         return True
                 logger.error(f"Telegram 请求失败: HTTP {response.status_code}")
-                logger.error(f"响应内容: {response.text}")
+                logger.error(f"响应内容: {redact_log_text(response.text)}")
                 return False
 
         return False
@@ -230,7 +231,7 @@ class TelegramSender:
         try:
             response = requests.post(api_url, json=plain_payload, timeout=timeout_seconds or 10)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            logger.error(f"Telegram plain-text fallback failed: {e}")
+            logger.error(f"Telegram plain-text fallback failed: {redact_log_text(e)}")
             return False
 
         if response.status_code == 200:
@@ -238,7 +239,7 @@ class TelegramSender:
                 result = response.json()
             except ValueError:
                 logger.error("Telegram 纯文本回退失败: 响应不是有效 JSON")
-                logger.error(f"响应内容: {response.text}")
+                logger.error(f"响应内容: {redact_log_text(response.text)}")
                 return False
 
             if result.get('ok'):
@@ -246,11 +247,11 @@ class TelegramSender:
                 return True
 
             logger.error("Telegram 纯文本回退失败: Telegram API 返回 ok=false")
-            logger.error(f"响应内容: {response.text}")
+            logger.error(f"响应内容: {redact_log_text(response.text)}")
             return False
 
         logger.error(f"Telegram 纯文本回退失败: HTTP {response.status_code}")
-        logger.error(f"响应内容: {response.text}")
+        logger.error(f"响应内容: {redact_log_text(response.text)}")
         return False
 
     def _send_telegram_chunked(
@@ -359,10 +360,10 @@ class TelegramSender:
             if response.status_code == 200 and response.json().get('ok'):
                 logger.info("Telegram 图片发送成功")
                 return True
-            logger.error("Telegram 图片发送失败: %s", response.text[:200])
+            logger.error("Telegram 图片发送失败: %s", redact_log_text(response.text[:200]))
             return False
         except Exception as e:
-            logger.error("Telegram 图片发送异常: %s", e)
+            logger.error("Telegram 图片发送异常: %s", redact_log_text(e))
             return False
 
     def _convert_to_telegram_markdown(self, text: str) -> str:

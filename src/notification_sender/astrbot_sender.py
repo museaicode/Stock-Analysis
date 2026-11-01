@@ -15,6 +15,7 @@ import requests
 
 from src.config import Config
 from src.formatters import markdown_to_html_document, strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -104,8 +105,8 @@ class AstrbotSender:
                 logger.info("AstrBot 消息发送成功")
                 return True
             else:
-                logger.error(f"AstrBot 发送失败: {response.status_code} {response.text}")
+                logger.error(f"AstrBot 发送失败: {response.status_code} {redact_log_text(response.text)}")
                 return False
         except Exception as e:
-            logger.error(f"AstrBot 发送异常: {e}")
+            logger.error(f"AstrBot 发送异常: {redact_log_text(e)}")
             return False

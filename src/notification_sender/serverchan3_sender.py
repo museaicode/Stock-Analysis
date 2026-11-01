@@ -13,6 +13,7 @@ import re
 
 from src.config import Config
 from src.formatters import strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -103,11 +104,11 @@ class Serverchan3Sender:
                 return True
             else:
                 logger.error(f"Server酱3 请求失败: HTTP {response.status_code}")
-                logger.error(f"响应内容: {response.text}")
+                logger.error(f"响应内容: {redact_log_text(response.text)}")
                 return False
 
         except Exception as e:
-            logger.error(f"发送 Server酱3 消息失败: {e}")
+            logger.error(f"发送 Server酱3 消息失败: {redact_log_text(e)}")
             import traceback
-            logger.debug(traceback.format_exc())
+            logger.debug(redact_log_text(traceback.format_exc()))
             return False

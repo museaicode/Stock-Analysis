@@ -562,6 +562,9 @@ jobs:
             python main.py $FORCE_RUN_ARG
           fi
       
+      # ⚠️ 隐私提醒：公开仓库的 Actions artifact 任何人（包括未登录用户）都可以下载。
+      # 因此这里只上传 reports/，不上传 logs/（日志可能含持仓、代理地址、请求明细等运行细节），
+      # 且保留期缩短为 3 天。如需排查日志，请直接查看本次运行的 Actions 日志输出。
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
         if: always()
@@ -569,8 +572,7 @@ jobs:
           name: analysis-reports-${{ github.run_number }}
           path: |
             reports/
-            logs/
-          retention-days: 30
+          retention-days: 3
       
       - name: 显示运行结果
         if: always()

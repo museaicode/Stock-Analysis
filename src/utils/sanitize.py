@@ -230,3 +230,143 @@ def _mapping_key_parts(key_text: str) -> list[str]:
         for part in re.split(r"[^A-Za-z0-9]+", split_camel)
         if part
     ]
+
+
+# ---------------------------------------------------------------------------
+# Log redaction (used by the global logging filter and notification senders)
+# ---------------------------------------------------------------------------
+
+# Telegram bot token, e.g. ``/bot123456789:AAE...`` or a bare ``123456789:AAE...``.
+_TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9])(bot)?\d{6,12}:[A-Za-z0-9_-]{30,}")
+# Query/fragment parameters whose value must never reach a log line.
+_LOG_SENSITIVE_QUERY_KEYS = {
+    "key",
+    "token",
+    "access_token",
+    "accesstoken",
+    "sendkey",
+    "send_key",
+    "secret",
+    "sign",
+    "password",
+    "passwd",
+    "pwd",
+    "apikey",
+    "api_key",
+    "api_token",
+    "auth",
+    "auth_token",
+    "code",
+    "signature",
+    "sig",
+    "webhook",
+}
+_LOG_QUERY_PARAM_PATTERN = re.compile(r"([?&#;])([^=&#\s]+)=([^&#\s]*)")
+_LOG_FAST_PATH_MARKERS = (
+    "://",
+    "bot",
+    "key",
+    "token",
+    "secret",
+    "password",
+    "bearer",
+    "authorization",
+    "cookie",
+    "sk-",
+    "send",
+    "hook",
+)
+_LOG_FAST_PATH_TOKEN_HINT = re.compile(r"\d{6,12}:")
+
+
+def _is_log_sensitive_query_key(key: str) -> bool:
+    normalized = key.strip().lower()
+    if normalized in _LOG_SENSITIVE_QUERY_KEYS:
+        return True
+    return _is_sensitive_mapping_key(normalized)
+
+
+def _redact_query_params(text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        sep, key, value = match.group(1), match.group(2), match.group(3)
+        if value and _is_log_sensitive_query_key(key):
+            return f"{sep}{key}={_REDACTED}"
+        return match.group(0)
+
+    return _LOG_QUERY_PARAM_PATTERN.sub(_replace, text)
+
+
+def redact_sensitive_url(url: str) -> str:
+    """Mask credentials inside a URL while keeping scheme and host for debugging.
+
+    - webhook URLs (WeCom, DingTalk, Feishu/Lark hook, Slack, Discord, Server酱 …)
+      keep only ``scheme://host/`` followed by ``[REDACTED]``;
+    - Telegram ``/bot<token>/`` path segments are masked;
+    - sensitive query/fragment parameters (key, token, access_token, sendkey …)
+      have their values replaced;
+    - ``user:password@`` userinfo is masked.
+    """
+    text = str(url or "")
+    if not text:
+        return text
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return _redact_query_params(_TELEGRAM_BOT_TOKEN_PATTERN.sub(_mask_telegram_token, text))
+
+    hostname = parsed.hostname or ""
+    if hostname and _is_webhook_url(hostname, parsed.path):
+        netloc = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+        return f"{parsed.scheme}://{netloc}/{_REDACTED}"
+
+    redacted = text
+    if parsed.username or parsed.password:
+        netloc = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+        redacted = redacted.replace(parsed.netloc, f"{_REDACTED}@{netloc}", 1)
+    redacted = _TELEGRAM_BOT_TOKEN_PATTERN.sub(_mask_telegram_token, redacted)
+    return _redact_query_params(redacted)
+
+
+def _mask_telegram_token(match: re.Match[str]) -> str:
+    return f"{match.group(1) or ''}{_REDACTED}"
+
+
+def _redact_url_match_for_log(match: re.Match[str]) -> str:
+    url = match.group(0)
+    # Keep trailing punctuation that is very unlikely to belong to the URL.
+    trailing = ""
+    while url and url[-1] in ".:'\"":
+        trailing = url[-1] + trailing
+        url = url[:-1]
+    return redact_sensitive_url(url) + trailing
+
+
+def redact_log_text(text: Any) -> str:
+    """Redact secrets from free-form log text without truncating it.
+
+    Unlike :func:`sanitize_diagnostic_text`, URLs are kept (minus credentials),
+    whitespace and line breaks are preserved, and nothing is truncated, so it
+    is safe to apply to every log record and traceback.
+    """
+    if text is None:
+        return ""
+    sanitized = str(text)
+    if not sanitized:
+        return sanitized
+    lowered = sanitized.lower()
+    if not any(marker in lowered for marker in _LOG_FAST_PATH_MARKERS) and not _LOG_FAST_PATH_TOKEN_HINT.search(
+        sanitized
+    ):
+        return sanitized
+    sanitized = _URL_PATTERN.sub(_redact_url_match_for_log, sanitized)
+    sanitized = _TELEGRAM_BOT_TOKEN_PATTERN.sub(_mask_telegram_token, sanitized)
+    sanitized = _AUTHORIZATION_HEADER_PATTERN.sub(r"\1\2[REDACTED]", sanitized)
+    sanitized = _COOKIE_HEADER_PATTERN.sub(r"\1\2[REDACTED]", sanitized)
+    sanitized = _BEARER_PATTERN.sub(r"\1[REDACTED]", sanitized)
+    sanitized = _SECRET_ASSIGNMENT_PATTERN.sub(_keep_redacted_assignment, sanitized)
+    sanitized = _TOKEN_LIKE_PATTERN.sub(_REDACTED, sanitized)
+    return sanitized
+
+
+def _keep_redacted_assignment(match: re.Match[str]) -> str:
+    return f"{match.group(1)}{match.group(2)}{_REDACTED}"

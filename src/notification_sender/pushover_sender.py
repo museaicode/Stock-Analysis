@@ -12,6 +12,7 @@ import requests
 
 from src.config import Config
 from src.formatters import markdown_to_plain_text
+from src.utils.sanitize import redact_log_text
 
 
 logger = logging.getLogger(__name__)
@@ -147,11 +148,11 @@ class PushoverSender:
                     return False
             else:
                 logger.error(f"Pushover 请求失败: HTTP {response.status_code}")
-                logger.debug(f"响应内容: {response.text}")
+                logger.debug(f"响应内容: {redact_log_text(response.text)}")
                 return False
                 
         except Exception as e:
-            logger.error(f"发送 Pushover 消息失败: {e}")
+            logger.error(f"发送 Pushover 消息失败: {redact_log_text(e)}")
             return False
     
     def _send_pushover_chunked(

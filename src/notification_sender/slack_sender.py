@@ -14,6 +14,8 @@ import requests
 
 from src.config import Config
 from src.formatters import chunk_content_by_max_bytes, strip_hidden_markdown_metadata
+from src.utils.sanitize import redact_log_text
+
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ class SlackSender:
         try:
             chunks = chunk_content_by_max_bytes(sanitized_content, _TEXT_LIMIT, add_page_marker=True)
         except Exception as e:
-            logger.error(f"分割 Slack 消息失败: {e}, 尝试整段发送。")
+            logger.error(f"分割 Slack 消息失败: {redact_log_text(e)}, 尝试整段发送。")
             chunks = [sanitized_content]
 
         # 优先使用 Bot API（与 _send_slack_image 保持一致）
@@ -128,10 +130,10 @@ class SlackSender:
             if response.status_code == 200 and response.text == "ok":
                 logger.info("Slack Webhook 消息发送成功")
                 return True
-            logger.error(f"Slack Webhook 发送失败: HTTP {response.status_code} {response.text[:200]}")
+            logger.error(f"Slack Webhook 发送失败: HTTP {response.status_code} {redact_log_text(response.text[:200])}")
             return False
         except Exception as e:
-            logger.error(f"Slack Webhook 发送异常: {e}")
+            logger.error(f"Slack Webhook 发送异常: {redact_log_text(e)}")
             return False
 
     def _send_slack_bot(self, content: str, *, timeout_seconds: Optional[float] = None) -> bool:
@@ -167,7 +169,7 @@ class SlackSender:
             logger.error(f"Slack Bot 发送失败: {result.get('error', 'unknown')}")
             return False
         except Exception as e:
-            logger.error(f"Slack Bot 发送异常: {e}")
+            logger.error(f"Slack Bot 发送异常: {redact_log_text(e)}")
             return False
 
     def _send_slack_image(self, image_bytes: bytes, fallback_content: str = "") -> bool:
@@ -233,7 +235,7 @@ class SlackSender:
                     return True
                 logger.error("Slack 完成上传失败: %s", result3.get('error', 'unknown'))
             except Exception as e:
-                logger.error("Slack Bot 图片发送异常: %s", e)
+                logger.error("Slack Bot 图片发送异常: %s", redact_log_text(e))
 
         # Webhook 模式或 Bot 上传失败：回退为文本
         if fallback_content:

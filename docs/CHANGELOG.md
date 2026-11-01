@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 桌面端更新源改为本仓库 `museaicode/Stock-Analysis`（`main.js` 与 `package.json` 的 publish 配置同步）；Windows 安装版检测到新版本后不再后台自动下载，改为弹窗提示、用户确认后才下载；新增 `DSA_DESKTOP_UPDATE_CHECK`（默认 `true`，设为 `false` 时完全不检查更新）。之后需通过本仓库 `desktop-release` 发布带 `latest.yml` 的 Release，否则更新检查找不到新版本，详见 `docs/desktop-package.md`。
 - [改进] 新增 `STOCK_INDEX_REMOTE_URL`，股票自动补全索引远程更新默认改为读取本仓库 `museaicode/Stock-Analysis` 的 `main` 分支（`STOCK_INDEX_REMOTE_UPDATE_ENABLED` 仍默认开启）；地址为空或非法时记录一条 warning 并跳过远程更新；下载失败（如私有仓库匿名访问 404）每轮只记一条 warning、后续重试降为 debug 并回退本地索引，详见 `docs/TUSHARE_STOCK_LIST_GUIDE.md`。
 - [改进] 默认设置 `LITELLM_LOCAL_MODEL_COST_MAP=True`（在 import litellm 之前生效，Docker 镜像与桌面端后端同步），LiteLLM 改用内置价格表，启动时不再从 GitHub 下载 BerriAI 价格表；显式设为 `False`（环境变量或 `.env`）时保持 LiteLLM 原行为，详见 `docs/LLM_CONFIG_GUIDE.md`。
+- [改进] 日志新增全局脱敏 Filter（`SensitiveDataFilter`，复用 `src/utils/sanitize.py`）：控制台与日志文件中的 Telegram `/bot<token>/`、URL 中的 `key`/`token`/`access_token`/`sendkey` 等参数、企业微信/钉钉/飞书/Server酱等 Webhook 地址及异常堆栈均做掩码；各通知渠道记录异常和响应内容前也先脱敏。`00-daily-analysis.yml` 的 artifact 不再上传 `logs/`，`reports/` 保留期由 30 天改为 3 天（公开仓库的 artifact 任何人可下载），详见 `docs/notifications.md`、`docs/DEPLOY.md`。
 
 ## [3.33.0] - 2026-10-15
 

@@ -29,6 +29,8 @@ from src.formatters import (
     format_feishu_markdown,
     strip_hidden_markdown_metadata,
 )
+from src.utils.sanitize import redact_log_text
+
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +216,7 @@ class FeishuSender:
                 )
                 logger.info("飞书 App Bot 客户端初始化成功 (domain=%s)", self._feishu_domain)
             except Exception as e:
-                logger.error("飞书 App Bot 客户端初始化失败: %s", e)
+                logger.error("飞书 App Bot 客户端初始化失败: %s", redact_log_text(e))
                 self._app_client = None
             return self._app_client
 
@@ -250,7 +252,7 @@ class FeishuSender:
                 content, self._feishu_max_bytes, add_page_marker=True
             )
         except (ValueError, TypeError, Exception) as e:
-            logger.error("App Bot 分片失败: %s", e)
+            logger.error("App Bot 分片失败: %s", redact_log_text(e))
             return False
 
         success = True
@@ -305,7 +307,7 @@ class FeishuSender:
                 .build()
             )
         except Exception as e:
-            logger.error("App Bot 请求构建失败: %s: %s", type(e).__name__, e)
+            logger.error("App Bot 请求构建失败: %s: %s", type(e).__name__, redact_log_text(e))
             return False
 
         last_status: Optional[str] = None
@@ -486,7 +488,7 @@ class FeishuSender:
                 )
                 resp = client.im.v1.file.create(req)
         except Exception as e:
-            logger.error("App Bot 文件上传异常: %s: %s", type(e).__name__, e)
+            logger.error("App Bot 文件上传异常: %s: %s", type(e).__name__, redact_log_text(e))
             return False
 
         if not resp.success():
@@ -523,7 +525,7 @@ class FeishuSender:
         try:
             text = path.read_text("utf-8")
         except (OSError, UnicodeDecodeError) as e:
-            logger.error("读取文件内容失败 (webhook fallback): %s: %s", type(e).__name__, e)
+            logger.error("读取文件内容失败 (webhook fallback): %s: %s", type(e).__name__, redact_log_text(e))
             return False
 
         file_label = self._guess_mime_for_webhook(path)
@@ -564,14 +566,14 @@ class FeishuSender:
         try:
             return self._send_feishu_message(formatted_content, timeout_seconds=timeout_seconds)
         except Exception as e:
-            logger.error("发送飞书消息失败: %s", e)
+            logger.error("发送飞书消息失败: %s", redact_log_text(e))
             return False
 
     def _send_feishu_chunked(self, content: str, max_bytes: int) -> bool:
         try:
             chunks = chunk_content_by_max_bytes(content, max_bytes, add_page_marker=True)
         except ValueError as e:
-            logger.error("飞书消息分片失败，单片预算不足以安全分页（关键词过长或 max_bytes 过小）: %s", e)
+            logger.error("飞书消息分片失败，单片预算不足以安全分页（关键词过长或 max_bytes 过小）: %s", redact_log_text(e))
             return False
 
         total_chunks = len(chunks)
@@ -585,7 +587,7 @@ class FeishuSender:
                 else:
                     logger.error("飞书第 %d/%d 批发送失败", i + 1, total_chunks)
             except Exception as e:
-                logger.error("飞书第 %d/%d 批发送异常: %s", i + 1, total_chunks, e)
+                logger.error("飞书第 %d/%d 批发送异常: %s", i + 1, total_chunks, redact_log_text(e))
             if i < total_chunks - 1:
                 time.sleep(1)
         return success_count == total_chunks
@@ -608,13 +610,13 @@ class FeishuSender:
             except (requests.exceptions.ConnectionError,
                      requests.exceptions.Timeout,
                      requests.exceptions.RequestException) as e:
-                logger.error("飞书 Webhook 网络请求异常: %s", e)
+                logger.error("飞书 Webhook 网络请求异常: %s", redact_log_text(e))
                 return False
             if response.status_code == 200:
                 try:
                     result = response.json()
                 except (ValueError, AttributeError):
-                    logger.error("飞书 Webhook 返回非 JSON 响应: %s", response.text[:200])
+                    logger.error("飞书 Webhook 返回非 JSON 响应: %s", redact_log_text(response.text[:200]))
                     return False
                 if not isinstance(result, dict):
                     logger.error("飞书 Webhook 返回非预期格式: %s", type(result).__name__)
