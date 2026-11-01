@@ -52,6 +52,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "allowElevation": false,
+      "uninstallDisplayName": "MIUSIAI ${version}",
       "include": "installer.nsh"
     },
     "mac": {
