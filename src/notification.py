@@ -83,7 +83,6 @@ from src.notification_sender import (
     SlackSender,
     TelegramSender,
     WechatSender,
-    WECHAT_IMAGE_MAX_BYTES,
     resolve_gotify_message_endpoint,
     resolve_ntfy_endpoint,
 )
@@ -2559,15 +2558,11 @@ class NotificationService(
 
         Fallback rules (send as Markdown text instead of image):
         - image_bytes is None: conversion failed / imgkit not installed / content over max_chars
-        - WeChat: image exceeds ~2MB limit
+
+        WeChat images over ~2MB are compressed / split by _send_wechat_report_image,
+        which falls back to Markdown text itself when the image cannot fit the limit.
         """
         if channel.value not in self._markdown_to_image_channels or image_bytes is None:
-            return False
-        if channel == NotificationChannel.WECHAT and len(image_bytes) > WECHAT_IMAGE_MAX_BYTES:
-            logger.warning(
-                "企业微信图片超限 (%d bytes)，回退为 Markdown 文本发送",
-                len(image_bytes),
-            )
             return False
         return True
 
@@ -2589,7 +2584,7 @@ class NotificationService(
         sanitized_content = strip_hidden_markdown_metadata(content).strip()
         if channel == NotificationChannel.WECHAT:
             if use_image:
-                return self._send_wechat_image(image_bytes)
+                return self._send_wechat_report_image(image_bytes, fallback_content=content)
             return self.send_to_wechat(content)
         if channel == NotificationChannel.FEISHU:
             if getattr(self, "_feishu_send_as_file", False) and route_type == "report":

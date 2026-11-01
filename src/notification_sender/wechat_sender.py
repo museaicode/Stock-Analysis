@@ -9,9 +9,13 @@ Wechat 发送提醒服务
 import logging
 import base64
 import hashlib
+import io
+import math
+import warnings
 import requests
 import time
-from typing import Optional
+from contextlib import contextmanager
+from typing import Iterator, List, Optional
 
 from src.config import Config
 from src.formatters import chunk_content_by_max_bytes, strip_hidden_markdown_metadata
@@ -22,6 +26,155 @@ logger = logging.getLogger(__name__)
 
 # WeChat Work image msgtype limit ~2MB (base64 payload)
 WECHAT_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+# 超限图片转 JPEG 时依次尝试的 quality
+WECHAT_JPEG_QUALITIES = (85, 75, 65)
+# 竖向切图最多张数，超过则回退为文字
+WECHAT_IMAGE_MAX_SEGMENTS = 6
+# 多张图片之间的发送间隔（企业微信机器人限流 20 条/分钟）
+WECHAT_IMAGE_SEND_INTERVAL_SECONDS = 1.0
+# JPEG 单边像素上限（libjpeg 限制 65535，Pillow 保守取 65500）
+_JPEG_MAX_DIMENSION = 65500
+# 仅在 _prepare_wechat_images 内放宽的 Pillow 像素上限（报告长图由本系统生成，可信）
+_WECHAT_IMAGE_MAX_PIXELS = 300_000_000
+
+
+@contextmanager
+def _relaxed_pil_pixel_limit() -> Iterator[None]:
+    """临时放宽 Pillow 的 MAX_IMAGE_PIXELS 并屏蔽 DecompressionBombWarning，退出时恢复。"""
+    from PIL import Image
+
+    previous = Image.MAX_IMAGE_PIXELS
+    if previous is not None and previous < _WECHAT_IMAGE_MAX_PIXELS:
+        Image.MAX_IMAGE_PIXELS = _WECHAT_IMAGE_MAX_PIXELS
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            yield
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
+
+
+def _encode_jpeg(image, quality: int) -> Optional[bytes]:
+    """将 RGB 图片编码为 JPEG；尺寸超出 JPEG 上限时返回 None。"""
+    width, height = image.size
+    if width > _JPEG_MAX_DIMENSION or height > _JPEG_MAX_DIMENSION:
+        return None
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=quality, optimize=True)
+    return buffer.getvalue()
+
+
+def _encode_jpeg_within_limit(image) -> Optional[tuple]:
+    """按 WECHAT_JPEG_QUALITIES 依次编码，返回第一个不超过上限的 (bytes, quality)。"""
+    for quality in WECHAT_JPEG_QUALITIES:
+        data = _encode_jpeg(image, quality)
+        if data is not None and len(data) <= WECHAT_IMAGE_MAX_BYTES:
+            return data, quality
+    return None
+
+
+def _to_rgb(image):
+    """转为 RGB；带透明通道时铺白底，避免透明区域变黑。"""
+    from PIL import Image
+
+    if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+        rgba = image.convert("RGBA")
+        background = Image.new("RGB", rgba.size, (255, 255, 255))
+        background.paste(rgba, mask=rgba.getchannel("A"))
+        return background
+    if image.mode != "RGB":
+        return image.convert("RGB")
+    return image
+
+
+def _prepare_wechat_images(image_bytes: bytes) -> Optional[List[bytes]]:
+    """
+    将报告长图处理为企业微信机器人可发送的一张或多张图片。
+
+    三级处理：
+    1. 不超过 WECHAT_IMAGE_MAX_BYTES：原样返回 [image_bytes]；
+    2. 超限：转 RGB JPEG，依次尝试 WECHAT_JPEG_QUALITIES，取第一个不超限的结果；
+    3. 仍超限：保持原宽度竖向切分，每段 JPEG 均不超限，最多 WECHAT_IMAGE_MAX_SEGMENTS 张。
+
+    Returns:
+        按顺序发送的图片字节列表；需要超过上限张数或处理失败时返回 None（调用方回退为文字）。
+    """
+    if not image_bytes:
+        return None
+    original_size = len(image_bytes)
+    if original_size <= WECHAT_IMAGE_MAX_BYTES:
+        logger.info("企业微信图片 %d bytes，未超限，原样发送", original_size)
+        return [image_bytes]
+
+    try:
+        from PIL import Image
+    except ImportError:
+        logger.warning(
+            "企业微信图片超限 (%d bytes) 且未安装 Pillow，无法压缩/切图，回退为文字",
+            original_size,
+        )
+        return None
+
+    try:
+        with _relaxed_pil_pixel_limit():
+            with Image.open(io.BytesIO(image_bytes)) as opened:
+                opened.load()
+                rgb = _to_rgb(opened)
+            width, height = rgb.size
+
+            # 第 1 级：整图转 JPEG
+            smallest_jpeg_size = None
+            for quality in WECHAT_JPEG_QUALITIES:
+                data = _encode_jpeg(rgb, quality)
+                if data is None:
+                    break
+                if len(data) <= WECHAT_IMAGE_MAX_BYTES:
+                    logger.info(
+                        "企业微信图片原始 %d bytes (%dx%d)，转为 JPEG 单张发送：%d bytes, quality=%d",
+                        original_size, width, height, len(data), quality,
+                    )
+                    return [data]
+                smallest_jpeg_size = len(data)
+
+            # 第 2 级：保持宽度竖向切分
+            total_bytes = smallest_jpeg_size if smallest_jpeg_size is not None else original_size
+            segments = max(
+                math.ceil(total_bytes / WECHAT_IMAGE_MAX_BYTES) + 1,
+                math.ceil(height / _JPEG_MAX_DIMENSION),
+            )
+            while segments <= WECHAT_IMAGE_MAX_SEGMENTS and segments <= height:
+                parts: List[bytes] = []
+                qualities: List[int] = []
+                for index in range(segments):
+                    top = height * index // segments
+                    bottom = height * (index + 1) // segments
+                    encoded = _encode_jpeg_within_limit(rgb.crop((0, top, width, bottom)))
+                    if encoded is None:
+                        break
+                    parts.append(encoded[0])
+                    qualities.append(encoded[1])
+                if len(parts) == segments:
+                    logger.info(
+                        "企业微信图片原始 %d bytes (%dx%d)，JPEG 仍超限，竖向切为 %d 张发送："
+                        "每张大小 %s bytes, quality=%s",
+                        original_size, width, height, segments,
+                        [len(part) for part in parts], qualities,
+                    )
+                    return parts
+                segments += 1
+
+            logger.warning(
+                "企业微信图片原始 %d bytes (%dx%d)，需要超过 %d 张才能使每张不超过 %d bytes，回退为文字",
+                original_size, width, height, WECHAT_IMAGE_MAX_SEGMENTS, WECHAT_IMAGE_MAX_BYTES,
+            )
+            return None
+    except Exception as e:
+        logger.warning(
+            "企业微信图片原始 %d bytes，压缩/切图失败 (%s)，回退为文字",
+            original_size, e,
+        )
+        return None
+
 
 class WechatSender:
     
@@ -130,6 +283,30 @@ class WechatSender:
             logger.error("企业微信图片发送异常: %s", e)
             return False
     
+    def _send_wechat_report_image(self, image_bytes: bytes, *, fallback_content: str) -> bool:
+        """
+        发送报告图片到企业微信：超限时先压缩/切图，按顺序逐张发送。
+
+        需要超过 WECHAT_IMAGE_MAX_SEGMENTS 张、处理失败或任一张发送失败时，
+        回退为 Markdown 分段文字发送（已发出的图片不撤回）。
+        """
+        images = _prepare_wechat_images(image_bytes)
+        if not images:
+            logger.warning("企业微信图片无法在限制内发送，回退为 Markdown 文本发送")
+            return self.send_to_wechat(fallback_content)
+
+        total = len(images)
+        for index, data in enumerate(images):
+            if index > 0:
+                time.sleep(WECHAT_IMAGE_SEND_INTERVAL_SECONDS)
+            if not self._send_wechat_image(data):
+                logger.warning(
+                    "企业微信第 %d/%d 张图片发送失败，已发出的 %d 张图片不撤回，回退为 Markdown 文本发送",
+                    index + 1, total, index,
+                )
+                return self.send_to_wechat(fallback_content)
+        return True
+
     def _send_wechat_message(self, content: str, *, timeout_seconds: Optional[float] = None) -> bool:
         """发送企业微信消息"""
         payload = self._gen_wechat_payload(content)

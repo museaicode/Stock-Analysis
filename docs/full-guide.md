@@ -1381,6 +1381,8 @@ PUSHOVER_API_TOKEN=your_api_token
 
 未安装或安装失败时，将自动回退为 Markdown 文本发送。
 
+企业微信机器人单张图片上限约 2MB；超限长图会先转 JPEG，仍超限则保持原宽度竖向切分（最多 6 张），超过 6 张或发送失败时回退为文本，详见 [通知渠道说明](notifications.md#企业微信图片大小限制)。
+
 **单股推送 + 图片发送**（Issue #455）：
 
 单股推送模式（`SINGLE_STOCK_NOTIFY=true`）下，若希望 Telegram 等渠道以图片形式推送，需同时配置 `MARKDOWN_TO_IMAGE_CHANNELS=telegram` 并安装转图工具（wkhtmltopdf 或 markdown-to-file）。个股日报汇总同样支持转图，无需额外配置。

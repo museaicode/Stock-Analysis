@@ -4016,7 +4016,9 @@ class StockAnalysisPipeline:
                             NotificationChannel.WECHAT, wechat_image_bytes
                         )
                         if use_image:
-                            return self.notifier._send_wechat_image(wechat_image_bytes)
+                            return self.notifier._send_wechat_report_image(
+                                wechat_image_bytes, fallback_content=dashboard_content
+                            )
                         return self.notifier.send_to_wechat(dashboard_content)
 
                     wechat_success, wechat_error = _send_channel_safely(

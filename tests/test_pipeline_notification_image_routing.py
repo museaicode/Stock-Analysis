@@ -169,7 +169,7 @@ class _FakeWechatNotifier:
                 channel.value in self._markdown_to_image_channels and image_bytes is not None
             )
         )
-        self._send_wechat_image = MagicMock(return_value=True)
+        self._send_wechat_report_image = MagicMock(return_value=True)
         self.send_to_wechat = MagicMock(return_value=True)
 
 
@@ -186,7 +186,7 @@ class TestPipelineWechatOnlyImageRouting(unittest.TestCase):
         mock_md2img.assert_called_once_with(
             "dashboard-report", max_chars=pipeline.notifier._markdown_to_image_max_chars
         )
-        pipeline.notifier._send_wechat_image.assert_called_once()
+        pipeline.notifier._send_wechat_report_image.assert_called_once_with(b"wechat-image", fallback_content="dashboard-report")
         pipeline.notifier.send_to_wechat.assert_not_called()
 
     def test_send_notifications_wechat_only_logs_hint_and_falls_back_to_text(self):
@@ -200,7 +200,7 @@ class TestPipelineWechatOnlyImageRouting(unittest.TestCase):
         ), patch("src.core.pipeline.logger.warning") as mock_warning:
             pipeline._send_notifications(results, ReportType.SIMPLE)
 
-        pipeline.notifier._send_wechat_image.assert_not_called()
+        pipeline.notifier._send_wechat_report_image.assert_not_called()
         pipeline.notifier.send_to_wechat.assert_called_once_with("dashboard-report")
         self.assertTrue(
             any("企业微信 Markdown 转图片失败" in str(call.args[0]) for call in mock_warning.call_args_list)
@@ -240,7 +240,7 @@ class _FakeRoutedNotifier:
             )
         )
         self.generate_brief_report = MagicMock(return_value="brief-report")
-        self._send_wechat_image = MagicMock(return_value=True)
+        self._send_wechat_report_image = MagicMock(return_value=True)
         self.send_to_wechat = MagicMock(return_value=True)
         self._send_telegram_photo = MagicMock(return_value=True)
         self.send_to_telegram = MagicMock(return_value=True)
