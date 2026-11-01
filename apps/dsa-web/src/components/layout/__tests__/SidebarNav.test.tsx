@@ -27,6 +27,13 @@ vi.mock('../../theme/ThemeToggle', () => ({
 }));
 
 describe('SidebarNav', () => {
+  it('shows the MIUSI brand name in the sidebar header', () => {
+    render(<MemoryRouter initialEntries={['/']}><SidebarNav /></MemoryRouter>);
+
+    expect(screen.getByText('MIUSI')).toBeInTheDocument();
+    expect(screen.queryByText('DSA')).not.toBeInTheDocument();
+  });
+
   it('keeps screening directly after chat without requiring configuration', () => {
     render(<MemoryRouter initialEntries={['/']}><SidebarNav /></MemoryRouter>);
 
