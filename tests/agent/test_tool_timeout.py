@@ -1078,6 +1078,6 @@ class TestGetToolRegistryReturnsLocalRegistry:
         from src.agent import factory
 
         sentinel = ToolRegistry({"data": 11})
-        monkeypatch.setattr(factory, "_build_tool_registry", lambda m: sentinel)
+        monkeypatch.setattr(factory, "_build_tool_registry", lambda m, **kwargs: sentinel)
         cfg = SimpleNamespace(agent_data_tool_timeout_s=11)
         assert factory.get_tool_registry(cfg) is sentinel

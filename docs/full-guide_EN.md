@@ -1734,6 +1734,12 @@ A: Check if Actions is enabled, and if cron expression is correct (note it's UTC
 - This admission-filter change is isolated to retrieval post-filtering and does not alter model names, provider settings, Base URL, LiteLLM route semantics, or runtime config migration/cleanup behavior.
 - `get_realtime_quote` does not use `stock_daily` as a realtime-quote cache and does not write intraday quotes into the daily-bar table; realtime quote caching should use a dedicated realtime store if needed.
 
+## FXMacroData Macro Tools (Off by Default)
+
+- The Agent's FXMacroData macro tools (`fxmacrodata_*`) send requests to the third-party service `fxmacrodata.com` and are **not registered** by default.
+- Set `FXMACRODATA_ENABLED=true` in `.env` and restart (or save settings to trigger a reload) to enable them; the optional `FXMACRODATA_API_KEY` is only read once they are enabled.
+- When disabled, FXMacroData entries in the Intelligence / Risk / Portfolio specialist allowlists are skipped silently without affecting other tools or the analysis flow; the tools' `provider_url` is the plain `https://fxmacrodata.com/` without utm parameters. See [FXMACRODATA_EN.md](FXMACRODATA_EN.md).
+
 ## Agent Event Monitor
 
 When `AGENT_EVENT_MONITOR_ENABLED=true`, schedule mode runs the alert worker every `AGENT_EVENT_MONITOR_INTERVAL_MINUTES` minutes. The worker reads enabled rules created through the Alert API and continues to support legacy rules in `AGENT_EVENT_ALERT_RULES_JSON`; triggered alerts still go through the existing notification channels. Alert API / Web persisted rules support price, change-percent, volume, daily technical indicators, `watchlist`, `portfolio_holdings`, `portfolio_account`, and `market` Market Light targets; legacy JSON still supports only the three basic rule types.

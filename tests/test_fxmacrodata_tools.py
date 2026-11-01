@@ -29,7 +29,8 @@ def test_every_operation_is_a_native_tool(operation):
     result = registry.execute(tool.name)
     assert result["records"][0]["val"] == 1.25
     assert result["data"]["data"][0]["announcement_datetime"] == 1000000000
-    assert "utm_source=daily_stock_analysis" in result["provider_url"]
+    assert result["provider_url"] == "https://fxmacrodata.com/"
+    assert "utm_" not in result["provider_url"]
 
 
 def test_transport_failures_do_not_enter_report_logs():
@@ -93,6 +94,70 @@ def test_close_failure_keeps_unavailable_result(monkeypatch):
     assert "detail must not appear" not in json.dumps(response)
 
 
+def _exec_build_tool_registry(*args, **kwargs):
+    import ast
+    import sys
+    import types
+    from unittest.mock import patch
+
+    source = Path(__file__).resolve().parents[1] / "src/agent/factory.py"
+    node = next(node for node in ast.parse(source.read_text(encoding="utf-8")).body
+                if isinstance(node, ast.FunctionDef) and node.name == "_build_tool_registry")
+    modules = {}
+    for name in ("data", "analysis", "search", "market", "backtest"):
+        module = types.ModuleType(f"src.agent.tools.{name}_tools")
+        setattr(module, f"ALL_{name.upper()}_TOOLS", [])
+        modules[module.__name__] = module
+    namespace = {}
+    with patch.dict(sys.modules, modules):
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
+        return namespace["_build_tool_registry"](*args, **kwargs)
+
+
+def test_factory_skips_fxmacrodata_tools_by_default():
+    assert _exec_build_tool_registry({"market": 35}).list_names() == []
+    assert _exec_build_tool_registry({"market": 35}, fxmacrodata_enabled=False).list_names() == []
+
+
+def test_fxmacrodata_enabled_defaults_to_false():
+    from src.config import Config
+
+    assert Config.__dataclass_fields__["fxmacrodata_enabled"].default is False
+    env_example = (Path(__file__).resolve().parents[1] / ".env.example").read_text(encoding="utf-8")
+    assert "\nFXMACRODATA_ENABLED=false\n" in env_example
+
+
+def test_get_tool_registry_honours_fxmacrodata_enabled(monkeypatch):
+    from types import SimpleNamespace
+
+    from src.agent import factory
+
+    calls = []
+
+    def fake_build(category_timeout_map, fxmacrodata_enabled=False):
+        calls.append(fxmacrodata_enabled)
+        registry = ToolRegistry(category_timeout_map=category_timeout_map or None)
+        if fxmacrodata_enabled:
+            for definition in build_fxmacrodata_tools(FixtureClient()):
+                registry.register(definition)
+        return registry
+
+    monkeypatch.setattr(factory, "_build_tool_registry", fake_build)
+    monkeypatch.setattr(factory, "_build_category_timeout_map", lambda config: {})
+    factory.reset_tool_registry()
+    try:
+        disabled = factory.get_tool_registry(SimpleNamespace(fxmacrodata_enabled=False))
+        assert not any(name.startswith("fxmacrodata_") for name in disabled.list_names())
+        # Cached for an equivalent config.
+        assert factory.get_tool_registry(SimpleNamespace(fxmacrodata_enabled=False)) is disabled
+        enabled = factory.get_tool_registry(SimpleNamespace(fxmacrodata_enabled=True))
+        assert set(enabled.list_names()) == set(fxmacrodata_tool_names())
+        assert factory.get_tool_registry(SimpleNamespace()) is not enabled
+        assert calls == [False, True, False]
+    finally:
+        factory.reset_tool_registry()
+
+
 def test_factory_registers_tools_for_report_and_chat():
     # Execute the exact factory registration function without importing unrelated
     # data providers, whose startup requires the application's full dependencies.
@@ -112,7 +177,7 @@ def test_factory_registers_tools_for_report_and_chat():
     namespace = {}
     with patch.dict(sys.modules, modules):
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
-        registry = namespace["_build_tool_registry"]({"market": 35})
+        registry = namespace["_build_tool_registry"]({"market": 35}, fxmacrodata_enabled=True)
     assert set(registry.list_names()) == {f"fxmacrodata_{op.name}" for op in list_operations()}
 
 

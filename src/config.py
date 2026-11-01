@@ -1009,6 +1009,8 @@ class Config:
     longbridge_access_token: Optional[str] = None
     longbridge_oauth_client_id: Optional[str] = None
     stock_index_remote_update_enabled: bool = True
+    # Opt-in: FXMacroData macro tools are only registered for Agents when true.
+    fxmacrodata_enabled: bool = False
     # Empty / invalid values disable remote refresh (see stock_index_remote_service).
     stock_index_remote_url: str = DEFAULT_STOCK_INDEX_REMOTE_URL
 
@@ -1969,6 +1971,7 @@ class Config:
                 default=True,
             ),
             stock_index_remote_url=os.getenv('STOCK_INDEX_REMOTE_URL', DEFAULT_STOCK_INDEX_REMOTE_URL),
+            fxmacrodata_enabled=parse_env_bool(os.getenv('FXMACRODATA_ENABLED'), default=False),
             generation_backend=generation_backend,
             generation_fallback_backend=generation_fallback_backend,
             generation_backend_timeout_seconds=generation_backend_timeout_seconds,

@@ -1,6 +1,6 @@
 # FXMacroData 宏观数据工具
 
-股票分析与聊天 Agent 的工具注册表已接入 FXMacroData。USD 数据目录、最近 90 天的指标历史与发布日历可免费使用，无需密钥、账户或信用卡。
+股票分析与聊天 Agent 的工具注册表已接入 FXMacroData，**默认关闭**：需在 `.env` 设置 `FXMACRODATA_ENABLED=true`（默认 `false`）后才会注册 `fxmacrodata_*` 工具并访问 `fxmacrodata.com`；关闭时专业 Agent 会静默跳过这些工具。工具返回的 `provider_url` 为不带 utm 参数的 `https://fxmacrodata.com/`。USD 数据目录、最近 90 天的指标历史与发布日历可免费使用，无需密钥、账户或信用卡。
 
 如需可选的授权数据，在运行应用的环境中配置 `FXMACRODATA_API_KEY`；使用 GitHub Actions 定时分析时，将其保存为仓库 Secret `FXMACRODATA_API_KEY`，`00-daily-analysis.yml` 会把它映射到分析步骤环境。密钥不会进入工具参数、模型上下文或响应。启用 Agent 模式后，可查询 `fxmacrodata_data_catalogue`（`currency=USD`）、`fxmacrodata_indicator_history`（`currency=USD, indicator=policy_rate`）及 `fxmacrodata_release_calendar`。
 

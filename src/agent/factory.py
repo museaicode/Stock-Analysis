@@ -50,6 +50,8 @@ _TOOL_REGISTRY = None
 # the ``_SKILL_MANAGER_CUSTOM_DIR`` value-comparison used by ``get_skill_manager``
 # below.  Pair with :func:`reset_tool_registry` for runtime config reload paths.
 _CACHED_TIMEOUT_MAP: Optional[dict] = None
+# FXMACRODATA_ENABLED value the cached registry was built with.
+_CACHED_FXMACRODATA_ENABLED: Optional[bool] = None
 _SKILL_MANAGER_PROTOTYPE = None
 # Sentinel used as initial value so None (i.e. no custom dir) compares as "changed"
 # on the very first call, forcing a build rather than accidentally skipping it.
@@ -339,15 +341,16 @@ def reset_tool_registry() -> None:
     cannot read a half-reset cache (``None`` registry with a stale map, or vice
     versa).
     """
-    global _TOOL_REGISTRY, _CACHED_TIMEOUT_MAP
+    global _TOOL_REGISTRY, _CACHED_TIMEOUT_MAP, _CACHED_FXMACRODATA_ENABLED
     with _tool_registry_lock:
         if _TOOL_REGISTRY is not None:
             logger.info("[AgentFactory] ToolRegistry cache cleared; will rebuild on next access")
         _TOOL_REGISTRY = None
         _CACHED_TIMEOUT_MAP = None
+        _CACHED_FXMACRODATA_ENABLED = None
 
 
-def _build_tool_registry(category_timeout_map):
+def _build_tool_registry(category_timeout_map, fxmacrodata_enabled=False):
     """Construct and populate a :class:`ToolRegistry` from the tool modules.
 
     Extracted from :func:`get_tool_registry` so the (potentially heavy) tool
@@ -364,13 +367,16 @@ def _build_tool_registry(category_timeout_map):
     from src.agent.tools.fxmacrodata_tools import ALL_FXMACRODATA_TOOLS
 
     registry = ToolRegistry(category_timeout_map=category_timeout_map or None)
+    # FXMacroData tools call a third-party service; register them only when
+    # FXMACRODATA_ENABLED=true (default false).
+    macro_tools = ALL_FXMACRODATA_TOOLS if fxmacrodata_enabled else []
     for tool_fn in (
         ALL_DATA_TOOLS
         + ALL_ANALYSIS_TOOLS
         + ALL_SEARCH_TOOLS
         + ALL_MARKET_TOOLS
         + ALL_BACKTEST_TOOLS
-        + ALL_FXMACRODATA_TOOLS
+        + macro_tools
     ):
         registry.register(tool_fn)
     return registry
@@ -405,7 +411,7 @@ def get_tool_registry(config=None):
     just constructed for the caller's timeout map, so a concurrent rebuild cannot
     leak a mismatched registry into this call's result.
     """
-    global _TOOL_REGISTRY, _CACHED_TIMEOUT_MAP
+    global _TOOL_REGISTRY, _CACHED_TIMEOUT_MAP, _CACHED_FXMACRODATA_ENABLED
 
     if config is None:
         from src.config import get_config
@@ -413,24 +419,34 @@ def get_tool_registry(config=None):
         config = get_config()
 
     category_timeout_map = _build_category_timeout_map(config)
+    fxmacrodata_enabled = bool(getattr(config, "fxmacrodata_enabled", False))
     # Fast path: take the lock so the cache-hit check and the return observe one
     # consistent (registry, timeout-map) pair — an unlocked check-then-use can
     # race with ``reset_tool_registry()`` and return ``None`` or a registry built
     # for the wrong timeout map (review OR-COM-a1e8b0c2).
     with _tool_registry_lock:
-        if _TOOL_REGISTRY is not None and _CACHED_TIMEOUT_MAP == category_timeout_map:
+        if (
+            _TOOL_REGISTRY is not None
+            and _CACHED_TIMEOUT_MAP == category_timeout_map
+            and _CACHED_FXMACRODATA_ENABLED == fxmacrodata_enabled
+        ):
             return _TOOL_REGISTRY
 
     # Build *outside* the lock (see ``_build_tool_registry`` rationale above).
-    registry = _build_tool_registry(category_timeout_map)
+    registry = _build_tool_registry(category_timeout_map, fxmacrodata_enabled=fxmacrodata_enabled)
     with _tool_registry_lock:
         # Re-check under the lock: another thread may have installed an
         # equivalent registry while we were importing the tool modules.
-        if _TOOL_REGISTRY is not None and _CACHED_TIMEOUT_MAP == category_timeout_map:
+        if (
+            _TOOL_REGISTRY is not None
+            and _CACHED_TIMEOUT_MAP == category_timeout_map
+            and _CACHED_FXMACRODATA_ENABLED == fxmacrodata_enabled
+        ):
             return _TOOL_REGISTRY
         invalidated = _TOOL_REGISTRY is not None
         _TOOL_REGISTRY = registry
         _CACHED_TIMEOUT_MAP = category_timeout_map
+        _CACHED_FXMACRODATA_ENABLED = fxmacrodata_enabled
     if invalidated:
         logger.info(
             "[AgentFactory] ToolRegistry rebuilt for new category timeouts: %s",
