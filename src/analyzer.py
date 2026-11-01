@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple, Callable, Union
 
+import src.llm.litellm_env  # noqa: F401 - must run before importing litellm
 import litellm
 from json_repair import repair_json
 from litellm import Router

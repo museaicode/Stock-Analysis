@@ -41,6 +41,7 @@ const GITHUB_REPO = 'Stock-Analysis';
 // Set DSA_DESKTOP_UPDATE_CHECK=false (process env or the desktop .env file) to
 // disable every update check, including the startup check and manual checks.
 const DESKTOP_UPDATE_CHECK_ENV_KEY = 'DSA_DESKTOP_UPDATE_CHECK';
+const LITELLM_LOCAL_MODEL_COST_MAP_ENV_KEY = 'LITELLM_LOCAL_MODEL_COST_MAP';
 const RELEASES_PAGE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
 const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
@@ -930,6 +931,15 @@ function buildBackendEnvironment({
 
   if (Number.isInteger(selectedPort) && selectedPort >= 1 && selectedPort <= 65535) {
     env.WEBUI_PORT = String(selectedPort);
+  }
+
+  // Keep LiteLLM on its bundled price table (no GitHub fetch at import time).
+  // An explicit value from the process environment or the desktop .env wins.
+  if (
+    !hasOwnValue(sourceEnv, LITELLM_LOCAL_MODEL_COST_MAP_ENV_KEY) &&
+    readEnvFileValue(envFile, LITELLM_LOCAL_MODEL_COST_MAP_ENV_KEY, sourceEnv) === null
+  ) {
+    env[LITELLM_LOCAL_MODEL_COST_MAP_ENV_KEY] = 'True';
   }
 
   if (isMac) {

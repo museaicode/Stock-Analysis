@@ -13,6 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+import src.llm.litellm_env  # noqa: F401 - must run before importing litellm
 import litellm
 from litellm import Router
 

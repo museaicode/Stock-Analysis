@@ -1832,3 +1832,23 @@ test('DSA_DESKTOP_UPDATE_CHECK=false skips every update check', async (t) => {
   assert.equal(state.status, mainModule.UPDATE_STATUS.ERROR);
   assert.match(state.message, /DSA_DESKTOP_UPDATE_CHECK=false/);
 });
+
+test('buildBackendEnvironment defaults LITELLM_LOCAL_MODEL_COST_MAP unless the user set it', (t) => {
+  const mainModule = loadMainModule(t, { platform: 'linux' });
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsa-desktop-litellm-env-'));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const envFile = path.join(tempRoot, '.env');
+  const build = (sourceEnv) => mainModule.buildBackendEnvironment({
+    envFile,
+    dbPath: path.join(tempRoot, 'data.db'),
+    logDir: path.join(tempRoot, 'logs'),
+    sourceEnv,
+  });
+
+  assert.equal(build({}).LITELLM_LOCAL_MODEL_COST_MAP, 'True');
+  assert.equal(build({ LITELLM_LOCAL_MODEL_COST_MAP: 'False' }).LITELLM_LOCAL_MODEL_COST_MAP, 'False');
+
+  fs.writeFileSync(envFile, 'LITELLM_LOCAL_MODEL_COST_MAP=False\n');
+  // The backend loads the .env value itself; the desktop must not shadow it.
+  assert.equal(Object.prototype.hasOwnProperty.call(build({}), 'LITELLM_LOCAL_MODEL_COST_MAP'), false);
+});

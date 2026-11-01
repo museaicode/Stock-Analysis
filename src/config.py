@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlparse
 from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
 
+from src.llm.litellm_env import apply_litellm_env_defaults
 from src.core.config_manager import unescape_compose_sensitive_env_value
 from src.report_language import (
     is_supported_report_language_value,
@@ -950,6 +951,9 @@ def setup_env(override: bool = False):
         key for key in compose_sensitive_keys if key in os.environ
     }
     load_dotenv(dotenv_path=env_path, override=override)
+    # Must happen before anything imports litellm: keep LiteLLM on its bundled
+    # price table instead of fetching it from GitHub (explicit values win).
+    apply_litellm_env_defaults()
     try:
         raw_env_values = dotenv_values(env_path, interpolate=False)
     except Exception as exc:  # pragma: no cover - defensive branch

@@ -577,6 +577,7 @@ def _call_llm(
     max_tokens: int | None = 2048,
 ) -> str:
     """Call LLM via litellm with fallback models and channel configs."""
+    import src.llm.litellm_env  # noqa: F401 - must run before importing litellm
     import litellm
 
     if silent:

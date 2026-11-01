@@ -485,6 +485,10 @@ Afraid you got the config wrong? Type the following commands in your terminal to
 - `python scripts/check_env.py --config`: Only verifies if the logic in your `.env` is structurally correct. (Provides instant results, no network calls, strictly checks for syntax omissions).
 - `python scripts/check_env.py --llm`: Sends a real greeting to the LLM to test the actual endpoint. This thoroughly verifies if your **network is working** and if your **account has sufficient balance**.
 
+### LiteLLM price table and network access
+
+By default LiteLLM downloads its model price table from GitHub (`raw.githubusercontent.com/BerriAI/litellm`) when `litellm` is imported. This project sets `LITELLM_LOCAL_MODEL_COST_MAP=True` before importing litellm (the Docker image and the desktop backend default to it as well), so the price table bundled with the installed LiteLLM package is used and nothing is fetched on startup; the table only affects usage/cost estimates, not model calls. To fetch the latest table on every start, set `LITELLM_LOCAL_MODEL_COST_MAP=False` explicitly in the environment or `.env`; an explicit value always wins.
+
 ### Common Pitfalls
 
 | Weird Error You Got? | Likely Culprit | How to Fix It? |
