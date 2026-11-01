@@ -2922,3 +2922,200 @@ textarea {
     text-align: left;
   }
 }
+
+/* =========================================
+   Full analysis report: print / "Export PDF"
+   Browser print (window.print) of the element marked [data-report-print-root].
+   Active only while that element is mounted, so other pages keep default printing.
+   ========================================= */
+.report-print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  /* Always print with the light palette, even when the dark theme is active. */
+  html:has([data-report-print-root]),
+  html:has([data-report-print-root]).dark,
+  html:has([data-report-print-root]) .dark {
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 228 35% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 228 35% 12%;
+    --elevated: 216 33% 97%;
+    --hover: 214 29% 90%;
+    --muted: 214 30% 94%;
+    --secondary: 214 32% 91%;
+    --accent: 214 32% 93%;
+    --border: 217 28% 84%;
+    --primary: 193 100% 33%;
+    --secondary-text: 224 18% 28%;
+    --muted-text: 224 12% 35%;
+    --color-purple: 247 70% 50%;
+    --color-danger-alert-text: 349 82% 35%;
+    --home-action-report-bg: hsl(247 84% 66% / 0.1);
+    --home-action-report-text: hsl(247 84% 56%);
+    --home-prose-blockquote-border: hsl(247 84% 66% / 0.28);
+    --home-prose-blockquote-bg: hsl(247 84% 66% / 0.08);
+  }
+
+  html:has([data-report-print-root]),
+  html:has([data-report-print-root]) body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    color: hsl(228 35% 12%) !important;
+  }
+
+  /* Hide everything that is neither the report nor one of its ancestors:
+     sidebar, top nav, the page under the drawer, backdrop, toasts, tooltips, dialogs. */
+  body:has([data-report-print-root]) *:not(:has([data-report-print-root])):not([data-report-print-root]):not([data-report-print-root] *) {
+    display: none !important;
+  }
+
+  /* Ancestors (drawer / dialog shells): drop fixed positioning, fixed heights and
+     inner scrolling so a long report flows across pages instead of one clipped screen. */
+  body:has([data-report-print-root]) :has([data-report-print-root]) {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    transform: none !important;
+    animation: none !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    z-index: auto !important;
+  }
+
+  [data-report-print-root] {
+    display: block !important;
+    max-width: none !important;
+    background: #fff !important;
+    color: hsl(228 35% 12%) !important;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    /* Keep red/green (rise/fall), score and risk colors in the PDF. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  [data-report-print-root] * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  [data-report-print-root] button,
+  [data-report-print-root] .report-print-hide,
+  [data-report-print-root] [data-print-hide],
+  [data-report-print-root] .home-spinner {
+    display: none !important;
+  }
+
+  /* Collapse/expand arrows are meaningless on paper. */
+  [data-report-print-root] summary {
+    list-style: none !important;
+  }
+
+  [data-report-print-root] summary::-webkit-details-marker {
+    display: none !important;
+  }
+
+  [data-report-print-root] .report-print-only {
+    display: block !important;
+  }
+
+  /* Expand collapsed blocks (JS opens <details>; this covers Ctrl+P and other collapsibles). */
+  [data-report-print-root] [data-print-expand],
+  [data-report-print-root] [hidden][data-print-expand] {
+    display: block !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  [data-report-print-root] .report-print-header {
+    margin-bottom: 6mm !important;
+    padding-bottom: 3mm;
+    border-bottom: 1px solid hsl(217 28% 84%);
+  }
+
+  [data-report-print-root] .report-print-disclaimer {
+    margin-top: 8mm;
+    padding-top: 3mm;
+    border-top: 1px solid hsl(217 28% 84%);
+    font-size: 9pt;
+    color: hsl(224 12% 35%) !important;
+    break-inside: avoid;
+  }
+
+  /* Pagination */
+  [data-report-print-root] :is(h1, h2, h3, h4, h5, h6) {
+    break-after: avoid;
+    page-break-after: avoid;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  [data-report-print-root] :is(pre, blockquote, tr, img, figure, li, .home-report-hero, .home-subpanel, .report-print-header, [data-print-card]) {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  [data-report-print-root] :is(p, li) {
+    orphans: 3;
+    widows: 3;
+  }
+
+  [data-report-print-root] pre {
+    white-space: pre-wrap !important;
+    word-break: break-word;
+    overflow: visible !important;
+  }
+
+  /* Wide tables: fit the A4 content width instead of being clipped. */
+  [data-report-print-root] table {
+    display: table !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto;
+    overflow: visible !important;
+    white-space: normal !important;
+    font-size: 8.5pt;
+  }
+
+  [data-report-print-root] thead {
+    display: table-header-group;
+  }
+
+  [data-report-print-root] :is(th, td) {
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+@media print {
+  /* Separate block: browsers without ::details-content must not drop the rules above. */
+  [data-report-print-root] details::details-content {
+    content-visibility: visible;
+    display: block;
+  }
+}

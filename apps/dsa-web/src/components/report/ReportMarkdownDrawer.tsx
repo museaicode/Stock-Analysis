@@ -10,6 +10,9 @@ interface ReportMarkdownDrawerProps {
   stockCode: string;
   onClose: () => void;
   reportLanguage?: ReportLanguage;
+  reportType?: string;
+  createdAt?: string;
+  marketRegion?: string | null;
 }
 
 interface ReportMarkdownDrawerErrorBoundaryProps {
@@ -88,6 +91,9 @@ export const ReportMarkdownDrawer: React.FC<ReportMarkdownDrawerProps> = ({
   stockCode,
   onClose,
   reportLanguage = 'zh',
+  reportType,
+  createdAt,
+  marketRegion,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const text = getReportText(normalizeReportLanguage(reportLanguage));
@@ -125,6 +131,9 @@ export const ReportMarkdownDrawer: React.FC<ReportMarkdownDrawerProps> = ({
             stockName={stockName}
             stockCode={stockCode}
             reportLanguage={reportLanguage}
+            reportType={reportType}
+            createdAt={createdAt}
+            marketRegion={marketRegion}
             onRequestClose={handleClose}
           />
         </Suspense>
