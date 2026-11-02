@@ -648,21 +648,36 @@ class DataFetcherManager:
         "AlphaVantageFetcher": {"us"},
     }
     _daily_source_health = CircuitBreaker(failure_threshold=3, cooldown_seconds=300.0)
-    # 美股个股日 K 内置链路：TickFlow 紧跟 Finnhub 兜底（见 _order_us_sources_by_priority）
+    # 美股个股日 K 内置链路：TickFlow 固定首选（长桥优先时排在长桥之后），
+    # Finnhub 仅在 FINNHUB_DAILY_ENABLED=true 时参与（见 get_daily_data /
+    # _order_us_sources_by_priority）。
     _US_DAILY_SOURCE_ORDER = (
-        "FinnhubFetcher",
         "TickFlowFetcher",
+        "FinnhubFetcher",
         "AlphaVantageFetcher",
         "YfinanceFetcher",
         "LongbridgeFetcher",
     )
     _US_DAILY_SOURCE_ORDER_LONGBRIDGE_FIRST = (
         "LongbridgeFetcher",
-        "FinnhubFetcher",
         "TickFlowFetcher",
+        "FinnhubFetcher",
         "AlphaVantageFetcher",
         "YfinanceFetcher",
     )
+    # US_REALTIME_SOURCE_PRIORITY 可选值 -> fetcher 名称
+    _US_REALTIME_SOURCE_MAP = {
+        "finnhub": "FinnhubFetcher",
+        "yfinance": "YfinanceFetcher",
+        "longbridge": "LongbridgeFetcher",
+        "tickflow": "TickFlowFetcher",
+        "alphavantage": "AlphaVantageFetcher",
+    }
+    # 美股优先级路由中由后续数据源补充的字段（价格本身始终来自主数据源）
+    _US_REALTIME_SUPPLEMENT_FIELDS = (
+        "pre_close", "volume", "amount", "open_price", "high", "low",
+    )
+    _us_realtime_unknown_sources_warned: set = set()
     _CN_INDEX_DAILY_SOURCE_ORDER = (
         "TencentFetcher",
         "AkshareFetcher",
@@ -2012,20 +2027,25 @@ class DataFetcherManager:
             raise DataFetchError(error_summary)
 
         # 美股（含美股指数）使用专用路由；港股走下方通用数据源循环
-        # Failover chain: Finnhub(P2) -> TickFlow(Finnhub+0.5) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
-        # When Longbridge preferred: Longbridge -> Finnhub -> TickFlow -> AlphaVantage -> Yfinance
+        # Failover chain: TickFlow -> [Finnhub, only if FINNHUB_DAILY_ENABLED] -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
+        # When Longbridge preferred: Longbridge -> TickFlow -> [Finnhub] -> AlphaVantage -> Yfinance
         # US index: Yfinance -> Finnhub (unchanged)
         if is_us:
             prefer_lb = self._longbridge_preferred(capability="daily_data") and not is_us_index
             if is_us_index:
                 # 指数始终 YFinance 首选（Longbridge 不提供指数K线）
                 source_order = ["YfinanceFetcher", "FinnhubFetcher"]
-            elif prefer_lb:
-                source_order = list(self._US_DAILY_SOURCE_ORDER_LONGBRIDGE_FIRST)
             else:
-                source_order = list(self._US_DAILY_SOURCE_ORDER)
-            # 消费各数据源当前优先级(含 *_PRIORITY 环境变量):默认优先级与内置链路一致,
-            # 单项调整(如 YFINANCE_PRIORITY=0)即时生效;指数/Longbridge preferred 的锚定首选不被普通优先级覆盖
+                if prefer_lb:
+                    source_order = list(self._US_DAILY_SOURCE_ORDER_LONGBRIDGE_FIRST)
+                else:
+                    source_order = list(self._US_DAILY_SOURCE_ORDER)
+                if not self._finnhub_daily_enabled():
+                    # Finnhub 免费套餐不含 /stock/candle；默认不参与美股个股日 K
+                    source_order = [name for name in source_order if name != "FinnhubFetcher"]
+            # 消费各数据源当前优先级(含 *_PRIORITY 环境变量):TickFlow 固定在其余数据源之前,
+            # 其余数据源之间按 *_PRIORITY 排序(如 YFINANCE_PRIORITY=0 即时生效);
+            # 指数/Longbridge preferred 的锚定首选不被普通优先级覆盖
             pin_first = bool(is_us_index or prefer_lb)
             source_order = self._order_us_sources_by_priority(source_order, pin_first=pin_first)
             market_label = "美股指数" if is_us_index else "美股"
@@ -2520,6 +2540,27 @@ class DataFetcherManager:
             return None
 
         if is_us or is_hk:
+            # 美股个股：US_REALTIME_SOURCE_PRIORITY 配置后按列表顺序取主数据并补字段；
+            # 列表全部失败（或未配置）时走下方固定路线。美股指数不受影响。
+            us_priority_fallback_from: Optional[str] = None
+            if is_us and not is_us_index:
+                us_priority = self._parse_us_realtime_source_priority(
+                    getattr(config, "us_realtime_source_priority", "")
+                )
+                if us_priority:
+                    priority_quote, us_priority_fallback_from = self._get_us_realtime_quote_by_priority(
+                        stock_code, us_priority, target_kwargs,
+                    )
+                    if priority_quote is not None:
+                        return self._enrich_realtime_quote(
+                            priority_quote,
+                            fallback_from=us_priority_fallback_from,
+                            realtime_cache_ttl=getattr(config, "realtime_cache_ttl", None),
+                        )
+                    logger.info(
+                        "[实时行情] 美股 %s US_REALTIME_SOURCE_PRIORITY=%s 全部失败，按固定路线兜底",
+                        stock_code, ",".join(us_priority),
+                    )
             prefer_lb = self._longbridge_preferred() and not is_us_index
             if is_us:
                 primary_src = "LongbridgeFetcher" if prefer_lb else "YfinanceFetcher"
@@ -2600,7 +2641,7 @@ class DataFetcherManager:
                 return None
             primary_token = self._realtime_fetcher_token(primary_src, **primary_kw)
             primary_quote = self._try_fetcher_quote(stock_code, primary_src, **primary_kw, **target_kwargs)
-            fallback_from = primary_token if primary_quote is None else None
+            fallback_from = us_priority_fallback_from or (primary_token if primary_quote is None else None)
             if primary_quote is not None:
                 logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: {primary_src})")
             # US index quotes are YFinance-only. Longbridge accepts index-like
@@ -2833,23 +2874,31 @@ class DataFetcherManager:
     def _order_us_sources_by_priority(self, source_order: List[str], *, pin_first: bool) -> List[str]:
         """按各数据源当前优先级重排美股日线路由(消费既有 *_PRIORITY 配置)。
 
-        稳定排序:各源默认优先级(Finnhub=2/AlphaVantage=3/Yfinance=4/Longbridge=5)
-        与内置链路一致,默认行为不变;单项 *_PRIORITY 调整即时生效。
-        TickFlow 在美股路由中固定为 Finnhub 优先级 + 0.5(Finnhub 缺失时按 2),
-        始终紧跟 Finnhub,不受 TICKFLOW_PRIORITY(A 股日 K 优先级)影响。
-        pin_first=True 时保持链路首位(指数固定 Yfinance、Longbridge preferred),
-        其余成员按优先级排序。
+        - pin_first=True 时保持链路首位(指数固定 Yfinance、Longbridge preferred)。
+        - TickFlow 固定排在其余数据源之前(Longbridge preferred 时紧随长桥),
+          不受 TICKFLOW_PRIORITY(仅作用于 A 股日 K)影响。
+        - 其余数据源之间按当前优先级稳定排序(默认 Finnhub=2/AlphaVantage=3/
+          Yfinance=4/Longbridge=5,与内置链路一致),单项 *_PRIORITY 调整即时生效。
         """
         self._ensure_concurrency_guards()
         if not source_order:
             return source_order
         priority_by_name = {f.name: f.priority for f in self._get_fetchers_snapshot()}
-        if "TickFlowFetcher" in priority_by_name:
-            priority_by_name["TickFlowFetcher"] = priority_by_name.get("FinnhubFetcher", 2) + 0.5
-        if pin_first:
-            pinned, rest = source_order[0], source_order[1:]
-            return [pinned] + sorted(rest, key=lambda name: priority_by_name.get(name, 10 ** 9))
-        return sorted(source_order, key=lambda name: priority_by_name.get(name, 10 ** 9))
+        head = [source_order[0]] if pin_first else []
+        rest = source_order[len(head):]
+        tickflow = [name for name in rest if name == "TickFlowFetcher"]
+        others = [name for name in rest if name != "TickFlowFetcher"]
+        return head + tickflow + sorted(others, key=lambda name: priority_by_name.get(name, 10 ** 9))
+
+    @staticmethod
+    def _finnhub_daily_enabled() -> bool:
+        """FINNHUB_DAILY_ENABLED=true 时 Finnhub 才参与美股个股日 K 路由。"""
+        try:
+            from src.config import get_config
+
+            return getattr(get_config(), "finnhub_daily_enabled", False) is True
+        except Exception:  # noqa: BLE001 - config unavailable: keep the safe default
+            return False
 
     def _longbridge_preferred(self, capability: str = "realtime_quote") -> bool:
         """Return True when Longbridge keys are configured and available.
@@ -2959,6 +3008,121 @@ class DataFetcherManager:
         if q is not None:
             logger.info(f"[实时行情] {stock_code} 从 {fetcher_name} 获取成功 (独立数据源)")
         return q
+
+    @classmethod
+    def _parse_us_realtime_source_priority(cls, raw: Any) -> List[str]:
+        """解析 US_REALTIME_SOURCE_PRIORITY；未知数据源记录 warning（同名只记一次）并忽略。"""
+        if not isinstance(raw, str) or not raw.strip():
+            return []
+        result: List[str] = []
+        for token in raw.split(","):
+            source = token.strip().lower()
+            if not source:
+                continue
+            if source not in cls._US_REALTIME_SOURCE_MAP:
+                if source not in cls._us_realtime_unknown_sources_warned:
+                    cls._us_realtime_unknown_sources_warned.add(source)
+                    logger.warning(
+                        "[实时行情] US_REALTIME_SOURCE_PRIORITY 忽略未知美股数据源: %s（可选: %s）",
+                        source, ",".join(cls._US_REALTIME_SOURCE_MAP),
+                    )
+                continue
+            if source not in result:
+                result.append(source)
+        return result
+
+    @classmethod
+    def _us_quote_needs_supplement(cls, quote) -> bool:
+        for field_name in cls._US_REALTIME_SUPPLEMENT_FIELDS + ("change_pct", "change_amount"):
+            if getattr(quote, field_name, None) is None:
+                return True
+        return cls._quote_needs_supplement(quote)
+
+    @staticmethod
+    def _fill_us_change_from_pre_close(quote) -> List[str]:
+        """主数据缺涨跌幅/涨跌额但已有前收盘价时，用主数据价格计算，保证与价格同源一致。"""
+        filled: List[str] = []
+        price = getattr(quote, "price", None)
+        pre_close = getattr(quote, "pre_close", None)
+        if price is None or pre_close is None or pre_close <= 0:
+            return filled
+        if getattr(quote, "change_pct", None) is None:
+            quote.change_pct = round((price - pre_close) / pre_close * 100, 2)
+            filled.append("change_pct")
+        if getattr(quote, "change_amount", None) is None:
+            quote.change_amount = round(price - pre_close, 4)
+            filled.append("change_amount")
+        return filled
+
+    @classmethod
+    def _merge_us_quote_fields(cls, primary, secondary) -> List[str]:
+        """美股优先级路由的补字段：价格保持主数据，其余缺失字段由 *secondary* 补充。"""
+        filled: List[str] = []
+        for field_name in cls._US_REALTIME_SUPPLEMENT_FIELDS:
+            current = getattr(primary, field_name, None)
+            if current is None or (field_name == "pre_close" and current <= 0):
+                value = getattr(secondary, field_name, None)
+                if value is not None and not (field_name == "pre_close" and value <= 0):
+                    setattr(primary, field_name, value)
+                    filled.append(field_name)
+        # 有前收盘价时以主数据价格计算涨跌幅；否则才直接沿用补充源的涨跌幅
+        filled.extend(cls._fill_us_change_from_pre_close(primary))
+        for field_name in ("change_pct", "change_amount"):
+            if getattr(primary, field_name, None) is None:
+                value = getattr(secondary, field_name, None)
+                if value is not None:
+                    setattr(primary, field_name, value)
+                    filled.append(field_name)
+        filled.extend(cls._merge_quote_fields(primary, secondary))
+        return filled
+
+    def _get_us_realtime_quote_by_priority(
+        self,
+        stock_code: str,
+        priority: List[str],
+        target_kwargs: Dict[str, Any],
+    ) -> Tuple[Any, Optional[str]]:
+        """按 US_REALTIME_SOURCE_PRIORITY 获取美股个股实时行情。
+
+        第一个返回有效价格的数据源作为主数据；主数据缺少的字段按同一顺序由后续
+        数据源补充。未配置 Key / 不可用的数据源直接跳过。返回 (quote, fallback_from)，
+        fallback_from 为第一个实际尝试但失败的数据源。
+        """
+        primary_quote = None
+        primary_index = -1
+        fallback_from: Optional[str] = None
+        for index, source in enumerate(priority):
+            fetcher_name = self._US_REALTIME_SOURCE_MAP[source]
+            if self._get_fetcher_by_name(fetcher_name, capability="realtime_quote") is None:
+                logger.debug("[实时行情] 美股 %s 跳过未配置/不可用的数据源 %s", stock_code, source)
+                continue
+            quote = self._try_fetcher_quote(stock_code, fetcher_name, **target_kwargs)
+            if quote is not None:
+                primary_quote = quote
+                primary_index = index
+                logger.info("[实时行情] 美股 %s 成功获取 (来源: %s, 按 US_REALTIME_SOURCE_PRIORITY)", stock_code, fetcher_name)
+                break
+            if fallback_from is None:
+                fallback_from = source
+        if primary_quote is None:
+            return None, fallback_from
+
+        self._fill_us_change_from_pre_close(primary_quote)
+        for source in priority[primary_index + 1:]:
+            if not self._us_quote_needs_supplement(primary_quote):
+                break
+            fetcher_name = self._US_REALTIME_SOURCE_MAP[source]
+            if self._get_fetcher_by_name(fetcher_name, capability="realtime_quote") is None:
+                continue
+            try:
+                secondary = self._try_fetcher_quote(stock_code, fetcher_name, **target_kwargs)
+                if secondary is not None:
+                    filled = self._merge_us_quote_fields(primary_quote, secondary)
+                    if filled:
+                        logger.info(f"[实时行情] {stock_code} 从 {fetcher_name} 补充了: {filled}")
+            except Exception as e:  # noqa: BLE001 - supplement failure must not drop the primary quote
+                logger.debug(f"[实时行情] {stock_code} {fetcher_name} 补充失败: {e}")
+        return primary_quote, fallback_from
 
     def _supplement_from_longbridge(self, stock_code: str, primary_quote):
         """Shortcut kept for backward-compat with A-share general loop."""

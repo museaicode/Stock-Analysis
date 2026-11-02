@@ -20,7 +20,7 @@ AkShare 的业绩预告、快报是按 `date=YYYYMMDD` 查询的全市场表，�
 - 已登记 A 股指数：固定按 Tencent → AkShare → TickFlow → YFinance 降级，不读取普通日 K 的 `*_PRIORITY` 配置。
 - A 股大盘复盘：配置 `TICKFLOW_API_KEY` 后，复盘聚合所需的指数和市场宽度会优先尝试 TickFlow，失败后回退现有免费源；这与单标的指数日线的 Tencent-first 固定链是不同入口。
 - 港股：配置 `FUTU_OPEND_HOST` 后，Futu 可作为港股实时与基本面主源；`FUTU_HK_REALTIME_SOURCE_PRIORITY` 控制港股实时行情顺序，Longbridge、AkShare、YFinance 保留为 fallback。
-- 美股：配置 `LONGBRIDGE_*` 后可优先使用 Longbridge，YFinance 保留实时主链 fallback；Finnhub、AlphaVantage 只在已有主源报价后补充字段或参与日线链，不能在 Longbridge/YFinance 全部失败时独立返回实时报价。
+- 美股：个股日 K 以 TickFlow 为首选（配置长桥且长桥优先时为 Longbridge → TickFlow），之后为 Finnhub（仅 `FINNHUB_DAILY_ENABLED=true`）→ AlphaVantage → YFinance → Longbridge。实时行情默认 Longbridge（已配置时）/ YFinance 为主，Finnhub、AlphaVantage、TickFlow 只补充字段；配置 `US_REALTIME_SOURCE_PRIORITY`（如 `finnhub,yfinance,tickflow`）后按列表顺序取主数据并补字段，列表全部失败时回到默认路线。美股指数不受影响。
 - 热点题材：选股的热点实现参考 AlphaSift，默认走 EastMoney provider，并使用本地 last-good cache 降低实时接口失败影响。
 
 ## 已接入数据源矩阵
@@ -35,7 +35,7 @@ AkShare 的业绩预告、快报是按 `date=YYYYMMDD` 查询的全市场表，�
 | 选股日线补特征 | `DataFetcherManager` | 选股引擎优先复用现有日线与缓存链路 | 现有链路失败后才回到引擎自身的日线源 |
 | 选股热点题材 | EastMoney provider、参考 AlphaSift 的 hotspot 实现、last-good cache | 未指定 provider 时默认使用 EastMoney provider | 实时失败时回退热点缓存；无缓存时返回稳定空态和可读错误 |
 | 港股 | Futu、Longbridge、YFinance、AkShare、Tushare | 配置 `FUTU_OPEND_HOST` 后 Futu 作为实时与基本面主源，按 `FUTU_HK_REALTIME_SOURCE_PRIORITY` 顺序尝试 | Futu 失败时回退 Longbridge / AkShare / YFinance；Longbridge 冷却或失败时继续回退 YFinance / 其他可用源 |
-| 美股 | Longbridge、YFinance、AkShare、Tushare、Finnhub、AlphaVantage、Stooq | 配置 Longbridge 凭证后参与美股日线/实时主链；YFinance 保持实时基础 fallback；Finnhub/AlphaVantage 可补充已有报价字段并参与日线链 | Longbridge 冷却或失败时实时主链回退 YFinance；两者都失败时不把补充源伪装成可独立返回报价的 fallback |
+| 美股 | Longbridge、YFinance、AkShare、Tushare、Finnhub、AlphaVantage、Stooq | 日线 TickFlow 首选；配置 Longbridge 凭证后参与美股日线/实时主链；YFinance 保持实时基础 fallback；Finnhub 默认只提供实时报价（日线需 `FINNHUB_DAILY_ENABLED=true`），AlphaVantage 补充报价字段并参与日线链；`US_REALTIME_SOURCE_PRIORITY` 可让 Finnhub 等成为实时主数据 | Longbridge 冷却或失败时实时主链回退 YFinance；未配置 `US_REALTIME_SOURCE_PRIORITY` 时补充源不独立返回报价 |
 
 ## 统一数据能力只读契约
 
@@ -67,7 +67,7 @@ flowchart TD
     DM -->|A 股个股/未登记标的| CN[按 priority 动态排序: Efinance/AkShare/Tushare/TickFlow/Pytdx/Baostock/YFinance/Tencent]
     DM -->|已登记沪深指数| CNI[Tencent -> AkShare -> TickFlow -> YFinance]
     DM -->|港股| HK[Futu if configured -> Longbridge/AkShare/YFinance fallback]
-    DM -->|美股| US[Longbridge/YFinance -> Finnhub/AlphaVantage -> Stooq]
+    DM -->|美股| US[TickFlow -> Finnhub if FINNHUB_DAILY_ENABLED -> AlphaVantage -> YFinance -> Longbridge]
 
     R --> RP[REALTIME_SOURCE_PRIORITY]
     RP --> RS[Tencent -> AkShare Sina -> Efinance -> AkShare EM]
@@ -197,7 +197,8 @@ LONGBRIDGE_ACCESS_TOKEN=your_access_token
 
 #### 美股日 K 与涨跌幅口径
 
-- **Finnhub 免费套餐不含历史 K 线**：`/stock/candle` 返回 403 时，进程内记住该结论，24 小时内不再请求 candle 接口，美股日 K 自动交由 TickFlow、AlphaVantage、YFinance 等后续数据源提供；首次记录一条 warning，之后只记 debug。Finnhub `/quote` 等其他接口不受影响，照常用于补充字段。
+- **Finnhub 默认不参与日 K**：`FINNHUB_DAILY_ENABLED` 默认 `false`，Finnhub 不请求 `/stock/candle`，只用于实时报价；付费套餐设为 `true` 后排在 TickFlow 之后。
+- **Finnhub 免费套餐不含历史 K 线**：`FINNHUB_DAILY_ENABLED=true` 但 `/stock/candle` 返回 403 时，进程内记住该结论，24 小时内不再请求 candle 接口，美股日 K 自动交由 TickFlow、AlphaVantage、YFinance 等后续数据源提供；首次记录一条 warning，之后只记 debug。Finnhub `/quote` 等其他接口不受影响，照常用于补充字段。
 - **TickFlow 美股交易日**：`.US` 标的的请求起止时间按 `America/New_York` 计算日期边界；返回结果优先使用 `trade_date`，只有毫秒时间戳时美股按 `America/New_York`、A 股按 `Asia/Shanghai` 换算交易日。北京时间周日分析时，最后一根美股 K 线是美东周五。
 - **前收盘价只取常规时段**：YFinance 实时行情的前收盘价使用 `regular_market_previous_close`（基于不含盘前盘后的日 K 线），缺失时再用 Yahoo `regularMarketPreviousClose` 或 `prepost=False` 日 K 线；不再使用 `fast_info.previous_close`（该字段由含盘后的 1 小时 K 线得到，财报盘后大幅波动时会让涨跌幅严重失真）。
 - **报告“当日涨跌幅”**：盘中显示实时涨跌幅；收盘后、盘前和非交易日显示最近一个已收盘交易日相对前一交易日的涨跌幅，行情日期也标记为该交易日。此时若实时涨跌幅与日 K 线最后两根常规交易日 K 线算出的涨跌幅相差超过 1 个百分点，以日 K 线为准并记录 warning（含两边数值和数据源）。该校验目前只对美股启用。
