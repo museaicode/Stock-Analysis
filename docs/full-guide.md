@@ -167,6 +167,7 @@ daily_stock_analysis/
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/github-daily-stock-analysis) 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
 | `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股（含美股大盘复盘）搜索，A 股/港股/题材搜索跳过 SerpAPI 以节省额度；SerpAPI 为唯一搜索能力时非美股将无搜索结果；等价于 `SEARCH_PROVIDER_MARKETS` 中的 `serpapi:us`（默认 `false`） | 可选 |
 | `SEARCH_PROVIDER_MARKETS` | 搜索服务按市场分配，格式 `provider:market[,market]`，多条用 `;` 分隔，如 `anspire:cn,hk,topic;serpapi:us;brave:us`。服务名：`anspire`/`bocha`/`tavily`/`brave`/`serpapi`/`minimax`/`searxng`；市场：`cn`/`hk`/`us`/`jp`/`kr`/`tw`/`topic`（题材搜索），`all` 或 `*` 表示不限制；未写入的服务参与所有市场，无效条目打 warning 后忽略；某市场分配后无可用服务时启动日志会提示（默认空，不限制） | 可选 |
+| `SEARCH_PROVIDER_STRATEGY` | 个股新闻搜索按市场选择搜索源调用策略，格式 `market:strategy`，多条用 `;` 分隔，如 `us:round_robin;cn:sequential;hk:sequential;topic:sequential`。`sequential` 按固定优先级调用、失败才换下一个；`round_robin` 每次请求轮换起点以平均消耗各家额度，失败、未配置 Key 或限流的搜索源仍会跳过并按顺序换下一个。轮询在 `SEARCH_PROVIDER_MARKETS` 过滤后的搜索源上进行，计数器在进程内按市场保存；未写到的市场按 `sequential`，非法策略告警并回退 `sequential`；综合情报搜索不受影响（默认空，即全部 `sequential`） | 可选 |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 可选 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
 | `BRAVE_API_KEYS` | [Brave Search](https://brave.com/search/api/) API（隐私优先，美股优化，多个key用逗号分隔） | 可选 |
@@ -397,6 +398,7 @@ daily_stock_analysis/
 | `SERPAPI_API_KEYS` | SerpAPI 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
 | `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股搜索，非美股目标跳过 SerpAPI；等价于 `serpapi:us`，`SEARCH_PROVIDER_MARKETS` 显式写了 `serpapi` 时以后者为准（默认 `false`） | 可选 |
 | `SEARCH_PROVIDER_MARKETS` | 搜索服务按市场分配，格式 `provider:market[,market]`，多条用 `;` 分隔，如 `anspire:cn,hk,topic;serpapi:us;brave:us`；市场取 `cn`/`hk`/`us`/`jp`/`kr`/`tw`/`topic`，`all`/`*` 表示不限制；未写入的服务不限制市场（默认空） | 可选 |
+| `SEARCH_PROVIDER_STRATEGY` | 个股新闻搜索按市场选择搜索源策略，格式 `market:strategy`，如 `us:round_robin;cn:sequential`；`sequential` 固定顺序、失败才换下一个，`round_robin` 每次请求轮换起点、失败仍换下一个；在 `SEARCH_PROVIDER_MARKETS` 过滤后轮询，未写到的市场与非法值按 `sequential`（默认空，全部 `sequential`） | 可选 |
 | `TAVILY_API_KEYS` | Tavily 搜索 API Key | 可选 |
 | `BOCHA_API_KEYS` | 博查搜索 API Key（中文优化） | 可选 |
 | `BRAVE_API_KEYS` | Brave Search API Key（美股优化） | 可选 |

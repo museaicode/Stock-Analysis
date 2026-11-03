@@ -1191,6 +1191,31 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "warning_codes": [],
     },
+    "SEARCH_PROVIDER_STRATEGY": {
+        "title": "Search Provider Strategy by Market",
+        "description": "Per-market provider strategy for stock news search, format market:strategy separated by ';'. sequential = fixed priority order, fall through on failure; round_robin = rotate the starting provider per request (spreads quota), still falls through on failure. Rotation runs after SEARCH_PROVIDER_MARKETS filtering. Unlisted markets and invalid values use sequential. Default empty (all sequential).",
+        "category": "data_source",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "",
+        "options": [],
+        "validation": {},
+        "display_order": 29,
+        "help_key": "settings.data_source.search_provider_strategy",
+        "examples": [
+            "SEARCH_PROVIDER_STRATEGY=us:round_robin;cn:sequential;hk:sequential;topic:sequential",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：搜索服务配置",
+                "href": f"{DOCS_BASE_URL}full-guide.md#搜索服务配置",
+            },
+        ],
+        "warning_codes": [],
+    },
     "TAVILY_API_KEYS": {
         "title": "Tavily API Keys",
         "description": "Comma-separated Tavily API keys.",
