@@ -1277,183 +1277,460 @@ class BochaSearchProvider(BaseSearchProvider):
             return '未知来源'
 
 
+# ---------------------------------------------------------------------------
+# Anspire AI Search（标准版 /search + 高级版 PRO /prosearch）
+# 文档: https://open.anspire.cn/document/docs/searchApi/
+# ---------------------------------------------------------------------------
+ANSPIRE_STANDARD_URL = "https://plugin.anspire.cn/api/ntsearch/search"
+ANSPIRE_PRO_URL = "https://plugin.anspire.cn/api/ntsearch/prosearch"
+ANSPIRE_TIERS = ("standard", "pro")
+ANSPIRE_DEFAULT_TIER = "standard"
+ANSPIRE_REGION_VALUES = ("domestic", "overseas", "mixed")
+ANSPIRE_DEFAULT_REGION_MARKETS = "cn:domestic;hk:mixed;topic:domestic"
+# ANSPIRE_REGION_MARKETS 未覆盖的市场（如 SEARCH_PROVIDER_MARKETS 把 us/jp 也分给了 Anspire）
+ANSPIRE_UNMAPPED_MARKET_REGION = "mixed"
+ANSPIRE_TOP_K_CHOICES = (10, 20, 30, 40, 50)
+ANSPIRE_DEFAULT_TOP_K = 10
+ANSPIRE_QUERY_MAX_CHARS = 64
+# 语义区域 -> region_mode；PRO 没有“仅海外”档
+_ANSPIRE_REGION_MODES: Dict[str, Dict[str, int]] = {
+    "standard": {"domestic": 0, "overseas": 1, "mixed": 2},
+    "pro": {"domestic": 0, "mixed": 1},
+}
+_ANSPIRE_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+_BEIJING_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
+_ANSPIRE_DATE_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
+    "%Y/%m/%d %H:%M:%S",
+    "%Y/%m/%d",
+    "%Y年%m月%d日 %H:%M",
+    "%Y年%m月%d日",
+)
+_QUERY_BOOLEAN_EDGE_RE = re.compile(r"^(?:(?:OR|AND)\s+)+|(?:\s+(?:OR|AND))+$")
+
+
+def normalize_anspire_tier(raw: Optional[str]) -> str:
+    """ANSPIRE_TIER：standard | pro，空值为 standard，非法值告警后回退 standard。"""
+    value = (raw or "").strip().lower()
+    if not value:
+        return ANSPIRE_DEFAULT_TIER
+    if value not in ANSPIRE_TIERS:
+        logger.warning(
+            "ANSPIRE_TIER=%r 无效（可选: standard, pro），已回退为 %s",
+            raw,
+            ANSPIRE_DEFAULT_TIER,
+        )
+        return ANSPIRE_DEFAULT_TIER
+    return value
+
+
+def normalize_anspire_top_k(raw: Any) -> int:
+    """ANSPIRE_TOP_K：仅允许 10/20/30/40/50，空值为 10，非法值告警后回退 10。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return ANSPIRE_DEFAULT_TOP_K
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = None
+    if value not in ANSPIRE_TOP_K_CHOICES:
+        logger.warning(
+            "ANSPIRE_TOP_K=%r 无效（可选: %s），已回退为 %s",
+            raw,
+            "/".join(str(v) for v in ANSPIRE_TOP_K_CHOICES),
+            ANSPIRE_DEFAULT_TOP_K,
+        )
+        return ANSPIRE_DEFAULT_TOP_K
+    return value
+
+
+def _parse_anspire_region_entries(raw: Optional[str], *, warn: bool) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    for entry in re.split(r"[;\n]", str(raw or "")):
+        entry = entry.strip()
+        if not entry:
+            continue
+        market, sep, region = entry.partition(":")
+        market = market.strip().lower()
+        region = region.strip().lower()
+        if not sep or not market or not region:
+            if warn:
+                logger.warning("ANSPIRE_REGION_MARKETS 条目格式无效，已忽略: %r（应为 market:region）", entry)
+            continue
+        if market not in SEARCH_TARGET_MARKETS:
+            if warn:
+                logger.warning(
+                    "ANSPIRE_REGION_MARKETS 未知市场 %r，已忽略（可选: %s）",
+                    market,
+                    ", ".join(sorted(SEARCH_TARGET_MARKETS)),
+                )
+            continue
+        if region not in ANSPIRE_REGION_VALUES:
+            if warn:
+                logger.warning(
+                    "ANSPIRE_REGION_MARKETS 条目 %r 区域无效，已忽略（可选: %s）",
+                    entry,
+                    ", ".join(ANSPIRE_REGION_VALUES),
+                )
+            continue
+        result[market] = region
+    return result
+
+
+def parse_anspire_region_markets(raw: Optional[str]) -> Dict[str, str]:
+    """解析 ANSPIRE_REGION_MARKETS（market:region，多条用 ; 分隔）。
+
+    在默认值 ``cn:domestic;hk:mixed;topic:domestic`` 基础上按市场覆盖；
+    无效条目告警后忽略，不影响其余条目。
+    """
+    regions = _parse_anspire_region_entries(ANSPIRE_DEFAULT_REGION_MARKETS, warn=False)
+    regions.update(_parse_anspire_region_entries(raw, warn=True))
+    return regions
+
+
+def resolve_anspire_region_mode(region: str, tier: str) -> int:
+    """按 tier 把语义区域换算成 region_mode；PRO 配置 overseas 时告警并回退 mixed。"""
+    tier_modes = _ANSPIRE_REGION_MODES.get(tier, _ANSPIRE_REGION_MODES[ANSPIRE_DEFAULT_TIER])
+    if region not in tier_modes:
+        logger.warning(
+            "Anspire %s 不支持区域 %r（PRO 仅支持 domestic/mixed），已回退为 mixed",
+            tier,
+            region,
+        )
+        region = "mixed"
+    return tier_modes[region]
+
+
+def truncate_anspire_query(
+    query: str,
+    stock_name: Optional[str] = None,
+    stock_code: Optional[str] = None,
+    max_chars: int = ANSPIRE_QUERY_MAX_CHARS,
+) -> str:
+    """把 query 收敛到 Anspire 上限（64 个中英文字符）内，优先保留股票名称和代码。"""
+    text = " ".join(str(query or "").split())
+    if len(text) <= max_chars:
+        return text
+
+    anchors: List[str] = []
+    for value in (stock_name, stock_code):
+        value = (value or "").strip()
+        if value and value in text and value not in anchors:
+            anchors.append(value)
+
+    tokens = text.split(" ")
+    selected: set = set()
+    used = 0
+
+    def _try_select(index: int) -> None:
+        nonlocal used
+        cost = len(tokens[index]) + (1 if used else 0)
+        if used + cost <= max_chars:
+            selected.add(index)
+            used += cost
+
+    # 1) 先保留包含股票名称/代码的词；2) 再按原顺序填充其余词
+    for i, token in enumerate(tokens):
+        if any(anchor in token for anchor in anchors):
+            _try_select(i)
+    for i in range(len(tokens)):
+        if i not in selected:
+            _try_select(i)
+    result = " ".join(tokens[i] for i in sorted(selected))
+
+    if not result or any(anchor not in result for anchor in anchors):
+        # 名称/代码埋在超长词里：名称、代码打头，其余内容按字符截断补足
+        rest = text
+        for anchor in anchors:
+            rest = rest.replace(anchor, " ")
+        result = " ".join(anchors + rest.split())
+
+    result = result[:max_chars].strip()
+    return _QUERY_BOOLEAN_EDGE_RE.sub("", result).strip() or result
+
+
+def _parse_anspire_date(value: Any) -> Optional[datetime]:
+    """解析 Anspire 返回的 date 字段；无时区信息时按北京时间处理。"""
+    if not value or not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    parsed: Optional[datetime] = None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        for fmt in _ANSPIRE_DATE_FORMATS:
+            try:
+                parsed = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_BEIJING_TZ)
+    return parsed.astimezone(_BEIJING_TZ)
+
+
 class AnspireSearchProvider(BaseSearchProvider):
     """
-    Anspire Search 搜索引擎
-    
-    特点：
-    - 面向AI生态的下一代实时智能搜索引擎
-    - 结果精准、响应快速
-    - 适用于股票新闻和市场情报搜索
-    
+    Anspire AI Search 搜索引擎（标准版 / 高级版 PRO）
+
+    - 标准版: GET /api/ntsearch/search，region_mode 0=国内 1=海外 2=混合，支持 search_type
+    - 高级版: GET /api/ntsearch/prosearch，region_mode 0=国内 1=混合，不支持 search_type
+    - 鉴权: Authorization: Bearer <API Key>
+    - 参数: query(≤64 字符) / top_k(10~50, 步长 10) / FromTime / ToTime（北京时间）
+    - 响应: {query, Uuid, results: [{title, content, url, score, date}]}
+
     文档: https://open.anspire.cn/document/docs/searchApi/
     """
-    
-    def __init__(self, api_keys: List[str]):
-        super().__init__(api_keys, "Anspire")
-    
-    def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7, region_mode: int = 2) -> SearchResponse:
-        """执行 Anspire 搜索"""
-        try:
-            import requests
-        except ImportError:
-            return SearchResponse(
-                query=query,
-                results=[],
-                provider=self.name,
-                success=False,
-                error_message="requests 未安装，请运行：pip install requests"
-            )
-        
-        try:
-            # API 端点
-            url = "https://plugin.anspire.cn/api/ntsearch/search"
-            
-            # 请求头
-            headers = {
-                'Authorization': f'Bearer {api_key}'
-            }
 
-            # 请求参数
-            payload = {
-                "query": query,
-                "top_k": min(max_results,50), 
-                "FromTime": (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"),
-                "ToTime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "region_mode": region_mode
-            }
-            
-            # 执行搜索
-            response = _get_with_retry(url, headers=headers, params=payload, timeout=10)
-            
-            # 检查 HTTP 状态码
+    def __init__(
+        self,
+        api_keys: List[str],
+        tier: Optional[str] = None,
+        region_markets: Optional[str] = None,
+        top_k: Any = None,
+        default_days: int = 7,
+    ):
+        super().__init__(api_keys, "Anspire")
+        self.tier = normalize_anspire_tier(tier)
+        self.url = ANSPIRE_PRO_URL if self.tier == "pro" else ANSPIRE_STANDARD_URL
+        self.top_k = normalize_anspire_top_k(top_k)
+        self.default_days = max(1, int(default_days or 7))
+        self.region_markets = parse_anspire_region_markets(region_markets)
+        # 启动时一次性换算并告警（PRO overseas -> mixed），请求时只查表
+        self.region_modes: Dict[str, int] = {
+            market: resolve_anspire_region_mode(region, self.tier)
+            for market, region in self.region_markets.items()
+        }
+        self._unmapped_region_mode = resolve_anspire_region_mode(ANSPIRE_UNMAPPED_MARKET_REGION, self.tier)
+
+    def region_mode_for_market(self, market: Optional[str]) -> int:
+        key = (market or "topic").strip().lower() or "topic"
+        return self.region_modes.get(key, self._unmapped_region_mode)
+
+    def _request_top_k(self, max_results: int) -> int:
+        """top_k 只能取 10/20/30/40/50：取配置值；调用方需要更多条时上调到最近的合法档位。"""
+        if max_results <= self.top_k:
+            return self.top_k
+        for choice in ANSPIRE_TOP_K_CHOICES:
+            if choice >= max_results:
+                return choice
+        return ANSPIRE_TOP_K_CHOICES[-1]
+
+    def build_request_params(
+        self,
+        query: str,
+        *,
+        max_results: int,
+        days: int,
+        market: Optional[str] = None,
+        stock_name: Optional[str] = None,
+        stock_code: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """按官方文档组装 GET 参数（不含鉴权）。"""
+        now_bj = (now or datetime.now(_BEIJING_TZ)).astimezone(_BEIJING_TZ)
+        from_time = now_bj - timedelta(days=max(1, int(days)))
+        params: Dict[str, Any] = {
+            "query": truncate_anspire_query(query, stock_name=stock_name, stock_code=stock_code),
+            "top_k": self._request_top_k(max_results),
+            "region_mode": self.region_mode_for_market(market),
+            "FromTime": from_time.strftime(_ANSPIRE_TIME_FORMAT),
+            "ToTime": now_bj.strftime(_ANSPIRE_TIME_FORMAT),
+        }
+        if self.tier == "standard":
+            # 项目只做网页新闻检索；PRO 不支持 search_type，绝不传
+            params["search_type"] = "web"
+        return params
+
+    def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        days: Optional[int] = None,
+        *,
+        market: Optional[str] = None,
+        stock_name: Optional[str] = None,
+        stock_code: Optional[str] = None,
+    ) -> SearchResponse:
+        """未显式传 days 时使用新闻时间窗口（NEWS_MAX_AGE_DAYS / NEWS_STRATEGY_PROFILE）。"""
+        return self._execute_search(
+            query,
+            max_results=max_results,
+            days=self.default_days if days is None else days,
+            market=market,
+            stock_name=stock_name,
+            stock_code=stock_code,
+        )
+
+    def _failure(self, query: str, error_msg: str) -> SearchResponse:
+        return SearchResponse(
+            query=query,
+            results=[],
+            provider=self.name,
+            success=False,
+            error_message=error_msg,
+        )
+
+    def _do_search(
+        self,
+        query: str,
+        api_key: str,
+        max_results: int,
+        days: int = 7,
+        market: Optional[str] = None,
+        stock_name: Optional[str] = None,
+        stock_code: Optional[str] = None,
+    ) -> SearchResponse:
+        """执行 Anspire 搜索"""
+        params = self.build_request_params(
+            query,
+            max_results=max_results,
+            days=days,
+            market=market,
+            stock_name=stock_name,
+            stock_code=stock_code,
+        )
+        if params["query"] != " ".join(str(query or "").split()):
+            logger.info(
+                "[Anspire] query 超过 %s 字符，已截断为: %r",
+                ANSPIRE_QUERY_MAX_CHARS,
+                params["query"],
+            )
+        log_ctx = (
+            f"market={market or 'topic'} tier={self.tier} region_mode={params['region_mode']} "
+            f"top_k={params['top_k']} FromTime={params['FromTime']}"
+        )
+
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"}
+            response = _get_with_retry(self.url, headers=headers, params=params, timeout=10)
+
             if response.status_code != 200:
-                # 尝试解析错误信息
                 try:
                     if response.headers.get('content-type', '').startswith('application/json'):
                         error_data = response.json()
-                        error_message = error_data.get('message', response.text)
+                        error_message = error_data.get('message') or error_data.get('msg') or response.text
                     else:
                         error_message = response.text
                 except Exception:
                     error_message = response.text
-                
-                # 根据错误码处理
+
                 if response.status_code == 403:
                     error_msg = f"余额不足或权限不足：{error_message}"
                 elif response.status_code == 401:
                     error_msg = f"API KEY 无效：{error_message}"
                 elif response.status_code == 400:
                     error_msg = f"请求参数错误：{error_message}"
+                elif response.status_code == 429:
+                    error_msg = f"请求频率达到限制：{error_message}"
                 else:
                     error_msg = f"HTTP {response.status_code}: {error_message}"
-                
-                logger.warning(f"[Anspire] 搜索失败：{error_msg}")
-                
-                return SearchResponse(
-                    query=query,
-                    results=[],
-                    provider=self.name,
-                    success=False,
-                    error_message=error_msg
-                )
-            
-            # 解析响应
+                logger.warning(f"[Anspire] 搜索失败（{log_ctx}）：{error_msg}")
+                return self._failure(query, error_msg)
+
             try:
                 data = response.json()
             except ValueError as e:
                 error_msg = f"响应 JSON 解析失败：{str(e)}"
                 logger.error(f"[Anspire] {error_msg}")
-                return SearchResponse(
-                    query=query,
-                    results=[],
-                    provider=self.name,
-                    success=False,
-                    error_message=error_msg
-                )
-            
+                return self._failure(query, error_msg)
+
+            if not isinstance(data, dict):
+                error_msg = "响应格式无效"
+                logger.error(f"[Anspire] {error_msg}")
+                return self._failure(query, error_msg)
+
             if 'code' in data and data.get('code') != 200:
                 error_msg = data.get('msg') or f"API 返回错误码：{data.get('code')}"
-                logger.warning(f"[Anspire] 搜索失败：{error_msg}")
-                return SearchResponse(
-                    query=query,
-                    results=[],
-                    provider=self.name,
-                    success=False,
-                    error_message=error_msg
-                )
-            
+                logger.warning(f"[Anspire] 搜索失败（{log_ctx}）：{error_msg}")
+                return self._failure(query, error_msg)
+
             if 'results' not in data:
                 error_msg = "响应中缺少 results 字段"
                 logger.error(f"[Anspire] {error_msg}，原始响应：{data}")
-                return SearchResponse(
-                    query=query,
-                    results=[],
-                    provider=self.name,
-                    success=False,
-                    error_message=error_msg
-                )
-            
-            # 记录原始响应到日志
-            logger.info(f"[Anspire] 搜索完成，query='{query}'")
+                return self._failure(query, error_msg)
+
             logger.debug(f"[Anspire] 原始响应：{data}")
-            
-            results = []
-            value_list = data.get('results', [])
-            
-            for item in value_list[:max_results]:
-                snippet = item.get('content')
-                if snippet and isinstance(snippet, str) and len(snippet) > 500:
-                    snippet = snippet[:500] + "..."
-                
-                results.append(SearchResult(
-                    title=item.get('title', ''),
-                    snippet=snippet,
-                    url=item.get('url', ''),
-                    source=self._extract_domain(item.get('url', '')),
-                    published_date=item.get('date', '')
-                ))
-            
-            logger.info(f"[Anspire] 成功解析 {len(results)} 条结果")
-            
+            raw_items = data.get('results') or []
+            results = self._parse_results(raw_items, from_time=params["FromTime"], max_results=max_results)
+            logger.info(
+                "[Anspire] 请求完成 %s returned=%s kept=%s",
+                log_ctx,
+                len(raw_items) if isinstance(raw_items, list) else 0,
+                len(results),
+            )
             return SearchResponse(
                 query=query,
                 results=results,
                 provider=self.name,
                 success=True,
             )
-            
+
         except requests.exceptions.Timeout:
             error_msg = "请求超时"
-            logger.error(f"[Anspire] {error_msg}")
-            return SearchResponse(
-                query=query,
-                results=[],
-                provider=self.name,
-                success=False,
-                error_message=error_msg
-            )
+            logger.error(f"[Anspire] {error_msg}（{log_ctx}）")
+            return self._failure(query, error_msg)
         except requests.exceptions.RequestException as e:
             error_msg = f"网络请求失败：{str(e)}"
-            logger.error(f"[Anspire] {error_msg}")
-            return SearchResponse(
-                query=query,
-                results=[],
-                provider=self.name,
-                success=False,
-                error_message=error_msg
-            )
+            logger.error(f"[Anspire] {error_msg}（{log_ctx}）")
+            return self._failure(query, error_msg)
         except Exception as e:
             error_msg = f"未知错误：{str(e)}"
             logger.error(f"[Anspire] {error_msg}")
-            return SearchResponse(
-                query=query,
-                results=[],
-                provider=self.name,
-                success=False,
-                error_message=error_msg
+            return self._failure(query, error_msg)
+
+    def _parse_results(self, items: Any, *, from_time: str, max_results: int) -> List[SearchResult]:
+        """把文档字段 title/content/url/score/date 映射为 SearchResult。
+
+        date 用于过滤（早于 FromTime 的丢弃）和排序（新到旧，同日期按 score 降序）；
+        无法解析 date 的条目保留并排在后面，交由上层新闻时效过滤兜底。
+        """
+        if not isinstance(items, list):
+            return []
+        floor = datetime.strptime(from_time, _ANSPIRE_TIME_FORMAT).replace(tzinfo=_BEIJING_TZ)
+        dated: List[Tuple[datetime, float, int, SearchResult]] = []
+        undated: List[Tuple[float, int, SearchResult]] = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get('url') or '')
+            snippet = item.get('content') or ''
+            if not isinstance(snippet, str):
+                snippet = str(snippet)
+            if len(snippet) > 500:
+                snippet = snippet[:500] + "..."
+            try:
+                score = float(item.get('score') or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            published = _parse_anspire_date(item.get('date'))
+            if published is not None and published < floor:
+                continue
+            result = SearchResult(
+                title=str(item.get('title') or ''),
+                snippet=snippet,
+                url=url,
+                source=self._extract_domain(url),
+                published_date=(
+                    published.strftime(_ANSPIRE_TIME_FORMAT)
+                    if published is not None
+                    else (str(item.get('date') or '').strip() or None)
+                ),
             )
-    
+            if published is not None:
+                dated.append((published, score, index, result))
+            else:
+                undated.append((score, index, result))
+        dated.sort(key=lambda row: (-row[0].timestamp(), -row[1], row[2]))
+        undated.sort(key=lambda row: (-row[0], row[1]))
+        ordered = [row[3] for row in dated] + [row[2] for row in undated]
+        return ordered[:max_results]
+
     @staticmethod
     def _extract_domain(url: str) -> str:
         """从 URL 提取域名作为来源"""
@@ -2488,6 +2765,9 @@ class SearchService:
         news_strategy_profile: str = "short",
         serpapi_us_only: bool = False,
         provider_markets: Optional[str] = None,
+        anspire_tier: Optional[str] = None,
+        anspire_region_markets: Optional[str] = None,
+        anspire_top_k: Any = None,
     ):
         """
         初始化搜索服务
@@ -2506,6 +2786,9 @@ class SearchService:
             serpapi_us_only: 开启后 SerpAPI 仅参与美股搜索（A 股/港股/题材等非美股目标跳过 SerpAPI）；
                 等价于 provider_markets 中的 ``serpapi:us``，表中显式写了 serpapi 时以表为准
             provider_markets: SEARCH_PROVIDER_MARKETS 原始字符串，按市场分配搜索服务
+            anspire_tier: ANSPIRE_TIER（standard -> /search，pro -> /prosearch）
+            anspire_region_markets: ANSPIRE_REGION_MARKETS 原始字符串（market:domestic|overseas|mixed）
+            anspire_top_k: ANSPIRE_TOP_K（10/20/30/40/50）
         """
         self._constructor_kwargs: Dict[str, Any] = {
             "bocha_keys": list(bocha_keys or []),
@@ -2521,6 +2804,9 @@ class SearchService:
             "news_strategy_profile": news_strategy_profile,
             "serpapi_us_only": bool(serpapi_us_only),
             "provider_markets": provider_markets,
+            "anspire_tier": anspire_tier,
+            "anspire_region_markets": anspire_region_markets,
+            "anspire_top_k": anspire_top_k,
         }
         self._serpapi_us_only = bool(serpapi_us_only)
         self._provider_markets: Dict[str, frozenset] = parse_search_provider_markets(provider_markets)
@@ -2586,8 +2872,21 @@ class SearchService:
 
         # 7. Anspire Search（实时智能搜索优化）
         if anspire_keys:
-            self._providers.insert(0, AnspireSearchProvider(anspire_keys))
-            logger.info(f"已配置 Anspire Search 搜索，共 {len(anspire_keys)} 个 API Key")
+            anspire_provider = AnspireSearchProvider(
+                anspire_keys,
+                tier=anspire_tier,
+                region_markets=anspire_region_markets,
+                top_k=anspire_top_k,
+                default_days=self.news_window_days,
+            )
+            self._providers.insert(0, anspire_provider)
+            logger.info(
+                "已配置 Anspire Search 搜索，共 %s 个 API Key，tier=%s，top_k=%s，region_mode=%s",
+                len(anspire_keys),
+                anspire_provider.tier,
+                anspire_provider.top_k,
+                ", ".join(f"{m}:{v}" for m, v in sorted(anspire_provider.region_modes.items())),
+            )
             
         if not self._providers:
             logger.warning("未配置任何搜索能力，新闻搜索功能将不可用")
@@ -2697,6 +2996,23 @@ class SearchService:
     def _is_us_search_target(cls, stock_code: Optional[str], stock_name: Optional[str]) -> bool:
         """判断搜索目标是否为美股（含美股大盘复盘）。"""
         return cls._search_target_market(stock_code, stock_name) == "us"
+
+    @classmethod
+    def _anspire_search_kwargs(
+        cls,
+        provider: BaseSearchProvider,
+        stock_code: Optional[str] = None,
+        stock_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Anspire 需要目标市场（换算 region_mode）和股票名称/代码（query 截断时优先保留）。"""
+        if not isinstance(provider, AnspireSearchProvider):
+            return {}
+        code = (stock_code or "").strip()
+        return {
+            "market": cls._search_target_market(stock_code, stock_name),
+            "stock_name": (stock_name or "").strip() or None,
+            "stock_code": code if code and code.lower() != "market" else None,
+        }
 
     def _effective_provider_markets(self) -> Dict[str, frozenset]:
         markets = getattr(self, "_provider_markets", None)
@@ -4081,6 +4397,8 @@ class SearchService:
                     search_kwargs["topic"] = "news"
                 elif isinstance(provider, BraveSearchProvider):
                     search_kwargs.update(self._brave_search_locale("", prefer_chinese=prefer_chinese))
+                else:
+                    search_kwargs.update(self._anspire_search_kwargs(provider))
 
                 started_at = time.monotonic()
                 try:
@@ -4328,6 +4646,8 @@ class SearchService:
                             prefer_chinese=prefer_chinese,
                         )
                     )
+                else:
+                    search_kwargs.update(self._anspire_search_kwargs(provider, stock_code, stock_name))
 
                 started_at = time.monotonic()
                 try:
@@ -4548,7 +4868,11 @@ class SearchService:
             if not provider.is_available:
                 continue
             
-            response = provider.search(query, max_results=5)
+            response = provider.search(
+                query,
+                max_results=5,
+                **self._anspire_search_kwargs(provider, stock_code, stock_name),
+            )
             
             if response.success:
                 self._put_cache(cache_key, response)
@@ -4763,6 +5087,7 @@ class SearchService:
                     dim['query'],
                     max_results=provider_max_results,
                     days=request_days,
+                    **self._anspire_search_kwargs(provider, stock_code, stock_name),
                 )
             if dim['strict_freshness']:
                 filtered_response = self._filter_news_response(
@@ -4963,7 +5288,11 @@ class SearchService:
                     continue
                 
                 try:
-                    response = provider.search(query, max_results=3)
+                    response = provider.search(
+                        query,
+                        max_results=3,
+                        **self._anspire_search_kwargs(provider, stock_code, stock_name),
+                    )
                     
                     if response.success and response.results:
                         # 去重并添加结果
@@ -5112,6 +5441,9 @@ def get_search_service() -> SearchService:
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
                     serpapi_us_only=getattr(config, "serpapi_us_only", False),
                     provider_markets=getattr(config, "search_provider_markets", ""),
+                    anspire_tier=getattr(config, "anspire_tier", None),
+                    anspire_region_markets=getattr(config, "anspire_region_markets", None),
+                    anspire_top_k=getattr(config, "anspire_top_k", None),
                 )
     
     return _search_service

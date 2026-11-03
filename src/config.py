@@ -1108,6 +1108,9 @@ class Config:
     searxng_public_instances_enabled: bool = False  # Opt in to public discovery when base URLs are absent
     serpapi_us_only: bool = False  # 开启后 SerpAPI 仅参与美股搜索（等价于 SEARCH_PROVIDER_MARKETS 中的 serpapi:us）
     search_provider_markets: str = ""  # 搜索服务按市场分配，如 "anspire:cn,hk,topic;serpapi:us;brave:us"
+    anspire_tier: str = "standard"  # ANSPIRE_TIER：standard -> /search，pro -> /prosearch
+    anspire_region_markets: str = ""  # ANSPIRE_REGION_MARKETS，空值使用 cn:domestic;hk:mixed;topic:domestic
+    anspire_top_k: str = "10"  # ANSPIRE_TOP_K：10/20/30/40/50
     searxng_timeout_seconds: int = 10  # 自建 SearXNG 单次搜索超时（秒）
 
     # === Social Sentiment (US stocks only, api.adanos.org) ===
@@ -1871,6 +1874,10 @@ class Config:
             default=False,
         )
         search_provider_markets = (os.getenv('SEARCH_PROVIDER_MARKETS') or '').strip()
+        # Anspire 搜索参数：原样读取，合法性校验与回退在 AnspireSearchProvider 中统一处理
+        anspire_tier = (os.getenv('ANSPIRE_TIER') or 'standard').strip()
+        anspire_region_markets = (os.getenv('ANSPIRE_REGION_MARKETS') or '').strip()
+        anspire_top_k = (os.getenv('ANSPIRE_TOP_K') or '10').strip()
 
         # 企微消息类型与最大字节数逻辑
         wechat_msg_type = os.getenv('WECHAT_MSG_TYPE', 'markdown')
@@ -2050,6 +2057,9 @@ class Config:
             serpapi_keys=serpapi_keys,
             serpapi_us_only=serpapi_us_only,
             search_provider_markets=search_provider_markets,
+            anspire_tier=anspire_tier,
+            anspire_region_markets=anspire_region_markets,
+            anspire_top_k=anspire_top_k,
             searxng_base_urls=searxng_base_urls,
             searxng_public_instances_enabled=searxng_public_instances_enabled,
             searxng_timeout_seconds=parse_env_int(

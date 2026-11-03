@@ -161,6 +161,9 @@ daily_stock_analysis/
 |------------|------|:----:|
 | `STOCK_LIST` | 自选股代码，如 `600519,300750,002594,7203.T,005930.KS`；推荐使用英文逗号，中文逗号、顿号、分号、空格和换行会被识别并规范为英文逗号 | ✅ |
 | `ANSPIRE_API_KEYS` | [Anspire AI Search](https://aisearch.anspire.cn/) 针对中文内容特别优化；同一 Key 可用于搜索与 Anspire 大模型网关的兜底示例（是否可用以控制台与账号权限为准） | 推荐 |
+| `ANSPIRE_TIER` | Anspire AI Search 版本：`standard` 调用 `GET /api/ntsearch/search`，`pro` 调用高级版 `GET /api/ntsearch/prosearch`（PRO 不传 `search_type`）；非法值告警后回退 `standard`（默认 `standard`） | 可选 |
+| `ANSPIRE_REGION_MARKETS` | Anspire 按市场设置搜索区域，格式 `market:region`，多条用 `;` 分隔，在默认值上按市场覆盖；区域 `domestic`/`overseas`/`mixed`，按版本换算 `region_mode`：standard 为 0/1/2，pro 为 domestic=0、mixed=1（pro 配置 `overseas` 告警并回退 `mixed`）；未列出的市场按 `mixed`（默认 `cn:domestic;hk:mixed;topic:domestic`） | 可选 |
+| `ANSPIRE_TOP_K` | Anspire 每次请求的 `top_k`，仅允许 `10`/`20`/`30`/`40`/`50`，非法值回退 `10`；新闻 `FromTime` 复用 `NEWS_MAX_AGE_DAYS` / `NEWS_STRATEGY_PROFILE` 的有效窗口（北京时间），`query` 超过 64 字符时优先保留股票名称和代码后截断（默认 `10`） | 可选 |
 | `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/github-daily-stock-analysis) 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
 | `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股（含美股大盘复盘）搜索，A 股/港股/题材搜索跳过 SerpAPI 以节省额度；SerpAPI 为唯一搜索能力时非美股将无搜索结果；等价于 `SEARCH_PROVIDER_MARKETS` 中的 `serpapi:us`（默认 `false`） | 可选 |
 | `SEARCH_PROVIDER_MARKETS` | 搜索服务按市场分配，格式 `provider:market[,market]`，多条用 `;` 分隔，如 `anspire:cn,hk,topic;serpapi:us;brave:us`。服务名：`anspire`/`bocha`/`tavily`/`brave`/`serpapi`/`minimax`/`searxng`；市场：`cn`/`hk`/`us`/`jp`/`kr`/`tw`/`topic`（题材搜索），`all` 或 `*` 表示不限制；未写入的服务参与所有市场，无效条目打 warning 后忽略；某市场分配后无可用服务时启动日志会提示（默认空，不限制） | 可选 |
@@ -388,6 +391,9 @@ daily_stock_analysis/
 | 变量名 | 说明 | 必填 |
 |--------|------|:----:|
 | `ANSPIRE_API_KEYS` | Anspire Open API Key（可用于搜索与大模型网关共享场景的配置示例；是否可用取决于账号权限与网关可见性，可有效增强 A 股分析效果） | 推荐 |
+| `ANSPIRE_TIER` | Anspire AI Search 版本：`standard` 调用 `GET /api/ntsearch/search`，`pro` 调用高级版 `GET /api/ntsearch/prosearch`（PRO 不传 `search_type`）；非法值告警后回退 `standard`（默认 `standard`） | 可选 |
+| `ANSPIRE_REGION_MARKETS` | Anspire 按市场设置搜索区域，格式 `market:region`，多条用 `;` 分隔，在默认值上按市场覆盖；区域 `domestic`/`overseas`/`mixed`，按版本换算 `region_mode`：standard 为 0/1/2，pro 为 domestic=0、mixed=1（pro 配置 `overseas` 告警并回退 `mixed`）；未列出的市场按 `mixed`（默认 `cn:domestic;hk:mixed;topic:domestic`） | 可选 |
+| `ANSPIRE_TOP_K` | Anspire 每次请求的 `top_k`，仅允许 `10`/`20`/`30`/`40`/`50`，非法值回退 `10`；新闻 `FromTime` 复用 `NEWS_MAX_AGE_DAYS` / `NEWS_STRATEGY_PROFILE` 的有效窗口（北京时间），`query` 超过 64 字符时优先保留股票名称和代码后截断（默认 `10`） | 可选 |
 | `SERPAPI_API_KEYS` | SerpAPI 搜索引擎结果补强，适合实时金融新闻 | 推荐 |
 | `SERPAPI_US_ONLY` | 设为 `true` 时 SerpAPI 仅参与美股搜索，非美股目标跳过 SerpAPI；等价于 `serpapi:us`，`SEARCH_PROVIDER_MARKETS` 显式写了 `serpapi` 时以后者为准（默认 `false`） | 可选 |
 | `SEARCH_PROVIDER_MARKETS` | 搜索服务按市场分配，格式 `provider:market[,market]`，多条用 `;` 分隔，如 `anspire:cn,hk,topic;serpapi:us;brave:us`；市场取 `cn`/`hk`/`us`/`jp`/`kr`/`tw`/`topic`，`all`/`*` 表示不限制；未写入的服务不限制市场（默认空） | 可选 |
