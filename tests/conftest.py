@@ -249,3 +249,19 @@ class _ThreadlessTestClient:
 
 fastapi.testclient.TestClient = _ThreadlessTestClient
 starlette.testclient.TestClient = _ThreadlessTestClient
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_sector_rankings_process_cache():
+    """板块排行进程级缓存（交易日缓存 + 失败负缓存）不得在测试之间泄漏。"""
+    try:
+        from data_provider.base import DataFetcherManager
+    except Exception:  # pragma: no cover - minimal environments
+        yield
+        return
+    DataFetcherManager.clear_sector_rankings_cache_for_tests()
+    yield
+    DataFetcherManager.clear_sector_rankings_cache_for_tests()

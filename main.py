@@ -1261,6 +1261,7 @@ def run_full_analysis(
             return _return_with_auto_backtest(False)
 
         # Issue #190: 合并推送（个股+大盘复盘）
+        failed_analyses = list(getattr(pipeline, "last_failed_analyses", None) or [])
         if merge_notification and (results or market_report) and not args.no_notify:
             parts = []
             if market_report:
@@ -1273,6 +1274,12 @@ def run_full_analysis(
                 parts.append(f"# 🚀 个股决策仪表盘\n\n{dashboard_content}")
             if parts:
                 combined_content = "\n\n---\n\n".join(parts)
+                if failed_analyses:
+                    # 失败股票提示放在合并消息末尾，避免个股失败被静默漏掉
+                    combined_content = pipeline._append_failed_analyses_notice(
+                        combined_content,
+                        failed_analyses,
+                    )
                 if pipeline.notifier.is_available():
                     if pipeline.notifier.send(combined_content, email_send_to_all=True, route_type="report"):
                         logger.info("已合并推送（个股+大盘复盘）")

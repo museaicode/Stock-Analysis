@@ -1137,6 +1137,7 @@ class Config:
     agent_arch: str = "single"     # Agent architecture: 'single' (legacy) or 'multi' (orchestrator)
     agent_orchestrator_mode: str = "standard"  # Orchestrator mode: quick/standard/full/specialist
     agent_orchestrator_timeout_s: int = 600  # Cooperative timeout budget for the whole multi-agent pipeline
+    agent_timeout_fallback: bool = True  # Agent 超时后回退到常规单次分析流程
     agent_technical_agent_timeout_s: float = 0
     agent_intel_agent_timeout_s: float = 0
     agent_risk_agent_timeout_s: float = 0
@@ -2109,6 +2110,8 @@ class Config:
                 field_name='AGENT_ORCHESTRATOR_TIMEOUT_S',
                 minimum=0,
             ),
+            agent_timeout_fallback=os.getenv('AGENT_TIMEOUT_FALLBACK', 'true').strip().lower()
+            not in ('false', '0', 'no', 'off'),
             agent_technical_agent_timeout_s=parse_env_float(
                 os.getenv('AGENT_TECHNICAL_AGENT_TIMEOUT_S'), 0,
                 field_name='AGENT_TECHNICAL_AGENT_TIMEOUT_S', minimum=0,

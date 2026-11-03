@@ -14,6 +14,7 @@ A股自选股智能分析系统 - 核心分析流水线
 import dataclasses
 import logging
 import inspect
+import re
 import threading
 import time
 from pathlib import Path
@@ -677,10 +678,11 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 趋势分析失败: {e}", exc_info=True)
 
+            agent_timeout_reason: Optional[str] = None
             if use_agent:
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
                 self._emit_progress(58, f"{stock_name}：正在切换 Agent 分析链路")
-                return self._analyze_with_agent(
+                agent_result = self._analyze_with_agent(
                     code,
                     report_type,
                     query_id,
@@ -696,6 +698,14 @@ class StockAnalysisPipeline:
                     market_structure_context=market_structure_context,
                     analysis_target=analysis_target,
                 )
+                if not self._should_fallback_after_agent_timeout(agent_result):
+                    return agent_result
+                agent_timeout_reason = agent_result.error_message
+                logger.warning(
+                    f"{stock_name}({code}) Agent 超时（{agent_timeout_reason}），"
+                    "使用已采集数据回退到常规单次分析流程"
+                )
+                self._emit_progress(46, f"{stock_name}：Agent 超时，回退为常规分析")
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
@@ -958,6 +968,15 @@ class StockAnalysisPipeline:
 
             if result:
                 self._append_daily_data_source(result, context, analysis_target)
+
+            if result and agent_timeout_reason is not None:
+                if result.success:
+                    self._mark_agent_timeout_fallback(result)
+                else:
+                    result.error_message = (
+                        f"Agent 超时且回退分析失败: {result.error_message or '未知错误'}"
+                        f"（Agent: {agent_timeout_reason}）"
+                    )
 
             # Step 8: 保存分析历史记录
             if result and result.success:
@@ -1483,6 +1502,43 @@ class StockAnalysisPipeline:
                 filtered.register(tool_def)
         executor.tool_registry = filtered
         return executor
+
+    _AGENT_TIMEOUT_ERROR_RE = re.compile(r"\b(?:agent|pipeline) timed out\b", re.IGNORECASE)
+
+    def _should_fallback_after_agent_timeout(self, agent_result: Optional[AnalysisResult]) -> bool:
+        """Agent 因超时失败且 AGENT_TIMEOUT_FALLBACK 开启时，回退到常规单次分析。"""
+        if not getattr(self.config, "agent_timeout_fallback", True):
+            return False
+        if agent_result is None or getattr(agent_result, "success", True):
+            return False
+        error_message = str(getattr(agent_result, "error_message", "") or "")
+        return bool(self._AGENT_TIMEOUT_ERROR_RE.search(error_message))
+
+    @staticmethod
+    def _mark_agent_timeout_fallback(result: AnalysisResult) -> None:
+        """在报告结论中注明本次为 Agent 超时回退分析（随历史记录一并持久化）。"""
+        language = normalize_report_language(getattr(result, "report_language", "zh"))
+        if language == "en":
+            note = "[Agent timeout fallback analysis]"
+        elif language == "ko":
+            note = "[에이전트 시간 초과 대체 분석]"
+        else:
+            note = "【本次为超时回退分析】"
+
+        def _prefix(text: Any) -> str:
+            text = str(text or "").strip()
+            if text.startswith(note):
+                return text
+            return f"{note} {text}".strip()
+
+        result.analysis_summary = _prefix(result.analysis_summary)
+        dashboard = result.dashboard if isinstance(result.dashboard, dict) else None
+        core = dashboard.get("core_conclusion") if dashboard else None
+        if isinstance(core, dict):
+            core["one_sentence"] = _prefix(core.get("one_sentence") or result.analysis_summary)
+        sources = str(result.data_sources or "").strip()
+        if "agent_timeout_fallback" not in sources:
+            result.data_sources = f"{sources}; agent_timeout_fallback" if sources else "agent_timeout_fallback"
 
     def _analyze_with_agent(
         self, 
@@ -3647,6 +3703,8 @@ class StockAnalysisPipeline:
             )
         
         results: List[AnalysisResult] = []
+        failed_analyses: List[Tuple[str, str]] = []
+        self.last_failed_analyses = failed_analyses
         
         # 使用线程池并发处理
         # 注意：max_workers 设置较低（默认3）以避免触发反爬
@@ -3693,6 +3751,9 @@ class StockAnalysisPipeline:
                             f"[{code}] 分析结果标记为失败，不计入汇总: "
                             f"{result.error_message or '未知原因'}"
                         )
+                        failed_analyses.append((code, result.error_message or "未知原因"))
+                    elif result is None and not dry_run:
+                        failed_analyses.append((code, "未生成分析结果，详见运行日志"))
 
                     # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
                     if idx < len(stock_codes) - 1 and analysis_delay > 0:
@@ -3705,6 +3766,8 @@ class StockAnalysisPipeline:
 
                 except Exception as e:
                     logger.error(f"[{code}] 任务执行失败: {e}")
+                    if not dry_run:
+                        failed_analyses.append((code, str(e) or type(e).__name__))
         
         # 统计
         elapsed_time = time.time() - start_time
@@ -3751,9 +3814,58 @@ class StockAnalysisPipeline:
                 logger.info("合并推送模式：跳过本次推送，将在个股+大盘复盘后统一发送")
                 self._send_notifications(results, report_type, skip_push=True)
             else:
-                self._send_notifications(results, report_type)
+                self._send_notifications(
+                    results,
+                    report_type,
+                    failed_analyses=failed_analyses,
+                )
+
+        # 失败股票提示：汇总推送不会覆盖的场景（单股推送模式 / 全部失败）单独发一条，
+        # 合并推送模式由 main 层拼进合并消息，避免静默漏掉。
+        if failed_analyses and send_notification and not dry_run and not merge_notification:
+            if single_stock_notify or not results:
+                self._send_failed_analyses_notice(failed_analyses)
         
         return results
+
+    @staticmethod
+    def format_failed_analyses_notice(failed_analyses: Optional[List[Tuple[str, str]]]) -> str:
+        """把失败股票渲染成推送末尾的提示行：⚠️ 002410 分析失败：<简短原因>。"""
+        lines: List[str] = []
+        for code, reason in failed_analyses or []:
+            short_reason = " ".join(str(reason or "未知原因").split())
+            if len(short_reason) > 80:
+                short_reason = short_reason[:77] + "..."
+            lines.append(f"⚠️ {code} 分析失败：{short_reason}")
+        return "\n\n".join(lines)
+
+    @classmethod
+    def _append_failed_analyses_notice(
+        cls,
+        content: str,
+        failed_analyses: Optional[List[Tuple[str, str]]],
+    ) -> str:
+        notice = cls.format_failed_analyses_notice(failed_analyses)
+        if not notice:
+            return content
+        return f"{(content or '').rstrip()}\n\n---\n\n{notice}\n"
+
+    def _send_failed_analyses_notice(self, failed_analyses: List[Tuple[str, str]]) -> None:
+        """单独推送失败股票提示（单股推送模式或本轮无成功结果时）。"""
+        notice = self.format_failed_analyses_notice(failed_analyses)
+        if not notice:
+            return
+        try:
+            if not self.notifier.is_available():
+                logger.info("通知渠道未配置，跳过失败股票提示推送")
+                return
+            content = f"# ⚠️ 个股分析失败提示\n\n{notice}\n"
+            if self.notifier.send(content, email_send_to_all=True, route_type="report"):
+                logger.info("失败股票提示已推送: %s", [code for code, _ in failed_analyses])
+            else:
+                logger.warning("失败股票提示推送失败")
+        except Exception as exc:
+            logger.warning("失败股票提示推送异常: %s", exc)
 
     def _send_single_stock_notification(
         self,
@@ -3938,6 +4050,7 @@ class StockAnalysisPipeline:
         results: List[AnalysisResult],
         report_type: ReportType = ReportType.SIMPLE,
         skip_push: bool = False,
+        failed_analyses: Optional[List[Tuple[str, str]]] = None,
     ) -> None:
         """
         发送分析结果通知
@@ -3947,12 +4060,16 @@ class StockAnalysisPipeline:
         Args:
             results: 分析结果列表
             skip_push: 是否跳过推送（仅保存到本地，用于单股推送模式）
+            failed_analyses: 本轮最终失败的 (股票代码, 原因)，追加到推送末尾（文本与图片均包含）
         """
         noise_decision = None
         noise_finalized = False
         try:
             logger.info("生成决策仪表盘日报...")
-            report = self._generate_aggregate_report(results, report_type)
+            report = self._append_failed_analyses_notice(
+                self._generate_aggregate_report(results, report_type),
+                failed_analyses,
+            )
             
             # 跳过推送（单股推送模式 / 合并模式：报告已由 _save_local_report 保存）
             if skip_push:
@@ -4082,8 +4199,11 @@ class StockAnalysisPipeline:
                 non_wechat_channels_needing_image = {
                     ch for ch in channels_needing_image if ch != NotificationChannel.WECHAT
                 }
+                # 存在失败提示时不走单股结构化海报，确保图片按 Markdown 渲染出末尾提示行
                 single_share_payload = (
-                    _share_image_payload(results[0]) if len(results) == 1 else None
+                    _share_image_payload(results[0])
+                    if len(results) == 1 and not failed_analyses
+                    else None
                 )
 
                 def _get_md2img_hint() -> str:
@@ -4123,6 +4243,10 @@ class StockAnalysisPipeline:
                             dashboard_content = self.notifier.generate_brief_report(results)
                         else:
                             dashboard_content = self.notifier.generate_wechat_dashboard(results)
+                        dashboard_content = self._append_failed_analyses_notice(
+                            dashboard_content,
+                            failed_analyses,
+                        )
                         logger.info(f"企业微信仪表盘长度: {len(dashboard_content)} 字符")
                         logger.debug(f"企业微信推送内容:\n{dashboard_content}")
                         wechat_image_bytes = None
@@ -4236,12 +4360,15 @@ class StockAnalysisPipeline:
                                     group_results=group_results,
                                     receivers=receivers,
                                 ) -> bool:
-                                    grp_report = self._generate_aggregate_report(group_results, report_type)
+                                    grp_report = self._append_failed_analyses_notice(
+                                        self._generate_aggregate_report(group_results, report_type),
+                                        failed_analyses,
+                                    )
                                     grp_image_bytes = None
                                     if channel.value in self.notifier._markdown_to_image_channels:
                                         group_payload = (
                                             _share_image_payload(group_results[0])
-                                            if len(group_results) == 1
+                                            if len(group_results) == 1 and not failed_analyses
                                             else None
                                         )
                                         group_image_kwargs: Dict[str, Any] = {

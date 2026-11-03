@@ -67,6 +67,30 @@ _AKSHARE_HISTORY_CALL_TIMEOUT = 30.0
 _AKSHARE_MARKET_STATS_CALL_TIMEOUT = 30.0
 _AKSHARE_TIMEOUT_PROCESS_JOIN_GRACE = 1.0
 _AKSHARE_TIMEOUT_PROCESS_START_METHOD = "spawn"
+_AKSHARE_SECTOR_RANKINGS_TIMEOUT_DEFAULT = 15.0
+
+
+def _get_akshare_sector_rankings_timeout() -> float:
+    """板块排行（东财/新浪）单次调用的等待上限，AKSHARE_SECTOR_RANKINGS_TIMEOUT_S，默认 15 秒。
+
+    akshare 内部对新浪板块接口使用 60s 读超时，海外服务器上经常被拖满；
+    这里由外层强制截断，超时即放弃并交给下一个数据源 / 负缓存处理。
+    """
+    raw = os.getenv("AKSHARE_SECTOR_RANKINGS_TIMEOUT_S")
+    if raw is None or not str(raw).strip():
+        return _AKSHARE_SECTOR_RANKINGS_TIMEOUT_DEFAULT
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "AKSHARE_SECTOR_RANKINGS_TIMEOUT_S=%r 无效，使用默认值 %s",
+            raw,
+            _AKSHARE_SECTOR_RANKINGS_TIMEOUT_DEFAULT,
+        )
+        return _AKSHARE_SECTOR_RANKINGS_TIMEOUT_DEFAULT
+    if value <= 0:
+        return _AKSHARE_SECTOR_RANKINGS_TIMEOUT_DEFAULT
+    return value
 
 
 # User-Agent 池，用于随机轮换
@@ -2216,7 +2240,11 @@ class AkshareFetcher(BaseFetcher):
             self._enforce_rate_limit()
 
             logger.info("[API调用] ak.stock_board_industry_name_em() 获取板块排行...")
-            df = ak.stock_board_industry_name_em()
+            df = _akshare_call_with_timeout(
+                ak.stock_board_industry_name_em,
+                timeout=_get_akshare_sector_rankings_timeout(),
+                call_name="ak.stock_board_industry_name_em",
+            )
             if df is not None and not df.empty:
                 change_col = '涨跌幅'
                 name = '板块名称'
@@ -2231,7 +2259,12 @@ class AkshareFetcher(BaseFetcher):
             self._enforce_rate_limit()
 
             logger.info("[API调用] ak.stock_sector_spot() 获取行业板块排行(新浪)...")
-            df = ak.stock_sector_spot(indicator='行业')
+            df = _akshare_call_with_timeout(
+                ak.stock_sector_spot,
+                indicator='行业',
+                timeout=_get_akshare_sector_rankings_timeout(),
+                call_name="ak.stock_sector_spot",
+            )
             if df is None or df.empty:
                 return None
             change_col = '涨跌幅'
