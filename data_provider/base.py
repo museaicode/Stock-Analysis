@@ -15,6 +15,7 @@
 """
 
 import logging
+import os
 import random
 import time
 from threading import BoundedSemaphore, RLock, Thread
@@ -56,6 +57,26 @@ def unwrap_exception(exc: Exception) -> Exception:
         current = next_exc
 
     return current
+
+
+SECTOR_RANKINGS_FAILURE_CACHE_MINUTES_DEFAULT = 30.0
+
+
+def _get_sector_rankings_failure_cache_seconds() -> float:
+    """板块排行失败负缓存时长（SECTOR_RANKINGS_FAILURE_CACHE_MINUTES，默认 30 分钟，0 关闭）。"""
+    raw = os.getenv("SECTOR_RANKINGS_FAILURE_CACHE_MINUTES")
+    if raw is None or not str(raw).strip():
+        return SECTOR_RANKINGS_FAILURE_CACHE_MINUTES_DEFAULT * 60
+    try:
+        minutes = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "SECTOR_RANKINGS_FAILURE_CACHE_MINUTES=%r 无效，使用默认值 %s",
+            raw,
+            SECTOR_RANKINGS_FAILURE_CACHE_MINUTES_DEFAULT,
+        )
+        return SECTOR_RANKINGS_FAILURE_CACHE_MINUTES_DEFAULT * 60
+    return max(0.0, minutes) * 60
 
 
 def summarize_exception(exc: Exception) -> Tuple[str, str]:
@@ -700,6 +721,11 @@ class DataFetcherManager:
     _CONCEPT_RANKINGS_EMPTY_CACHE_TTL_SECONDS = 30.0
     _concept_rankings_cache_lock = RLock()
     _concept_rankings_cache: Dict[int, Tuple[float, List[Dict], List[Dict]]] = {}
+    # 行业板块排行：进程内按交易日共享（同一轮任务的多只股票复用一次请求），
+    # 全部数据源失败时写入短期负缓存，后续调用直接跳过，避免对慢接口反复重试。
+    _sector_rankings_cache_lock = RLock()
+    _sector_rankings_cache: Dict[Tuple[str, int], Tuple[List[Dict], List[Dict], List[Dict[str, Any]]]] = {}
+    _sector_rankings_failure_cache: Dict[int, Tuple[float, str]] = {}
     # Analysis pipelines can create fresh managers while an earlier request is
     # still running. Quarantine only explicitly keyed provider operations, and
     # only after timeout; healthy concurrent calls keep their existing behavior.
@@ -5036,11 +5062,91 @@ class DataFetcherManager:
             [err or "boards failed"],
         )
 
+    @classmethod
+    def clear_sector_rankings_cache_for_tests(cls) -> None:
+        with cls._sector_rankings_cache_lock:
+            cls._sector_rankings_cache.clear()
+            cls._sector_rankings_failure_cache.clear()
+
+    @staticmethod
+    def _sector_rankings_trading_day_key() -> str:
+        """A 股有效交易日，作为板块排行进程内缓存的 key；解析失败时退回自然日。"""
+        try:
+            from src.core.trading_calendar import get_effective_trading_date
+
+            return get_effective_trading_date("cn").isoformat()
+        except Exception as exc:  # pragma: no cover - fail-open
+            logger.debug("[板块排行] 交易日解析失败，退回自然日: %s", exc)
+            return datetime.now().date().isoformat()
+
     def _get_sector_rankings_with_meta(
             self,
             n: int = 5,
         ) -> Tuple[List[Dict], List[Dict], List[Dict[str, Any]], str]:
-            """Get sector rankings with ordered fallback chain metadata."""
+            """Get sector rankings with trading-day cache and short negative cache."""
+            try:
+                normalized_n = int(n)
+            except (TypeError, ValueError):
+                normalized_n = 5
+            if normalized_n <= 0:
+                normalized_n = 5
+
+            cls = self.__class__
+            with cls._sector_rankings_cache_lock:
+                day_key = self._sector_rankings_trading_day_key()
+                cached = cls._sector_rankings_cache.get((day_key, normalized_n))
+                if cached is not None:
+                    logger.debug("[板块排行] 命中交易日缓存 day=%s n=%s", day_key, normalized_n)
+                    return (
+                        self._copy_ranking_rows(cached[0]),
+                        self._copy_ranking_rows(cached[1]),
+                        [{"provider": "sector_rankings_cache", "result": "ok", "duration_ms": 0}],
+                        "",
+                    )
+
+                failure = cls._sector_rankings_failure_cache.get(normalized_n)
+                if failure is not None and failure[0] > time.monotonic():
+                    error = f"板块数据不可用（近期请求失败，已跳过）: {failure[1]}"
+                    logger.info("[板块排行] 命中失败负缓存，跳过请求: %s", failure[1])
+                    return (
+                        [],
+                        [],
+                        [{
+                            "provider": "sector_rankings_cache",
+                            "result": "skipped",
+                            "duration_ms": 0,
+                            "error": error,
+                        }],
+                        error,
+                    )
+
+                top, bottom, source_chain, last_error = self._fetch_sector_rankings_with_meta(normalized_n)
+                if top or bottom:
+                    cls._sector_rankings_cache[(day_key, normalized_n)] = (
+                        self._copy_ranking_rows(top),
+                        self._copy_ranking_rows(bottom),
+                        list(source_chain),
+                    )
+                    cls._sector_rankings_failure_cache.pop(normalized_n, None)
+                else:
+                    ttl_seconds = _get_sector_rankings_failure_cache_seconds()
+                    if ttl_seconds > 0:
+                        cls._sector_rankings_failure_cache[normalized_n] = (
+                            time.monotonic() + ttl_seconds,
+                            last_error or "所有数据源返回空结果",
+                        )
+                        logger.warning(
+                            "[板块排行] 所有数据源失败，%.0f 分钟内不再重试: %s",
+                            ttl_seconds / 60,
+                            last_error,
+                        )
+                return top, bottom, source_chain, last_error
+
+    def _fetch_sector_rankings_with_meta(
+            self,
+            n: int = 5,
+        ) -> Tuple[List[Dict], List[Dict], List[Dict[str, Any]], str]:
+            """Get sector rankings with ordered fallback chain metadata (no cache)."""
             source_chain: List[Dict[str, Any]] = []
             last_error = ""
 
@@ -5095,7 +5201,10 @@ class DataFetcherManager:
         top, bottom, _, last_error = self._get_sector_rankings_with_meta(n)
         if top or bottom:
             return top, bottom
-        logger.warning(f"[板块排行] 所有数据源均失败，最终错误: {last_error}")
+        if str(last_error).startswith("板块数据不可用"):
+            logger.info(f"[板块排行] {last_error}")
+        else:
+            logger.warning(f"[板块排行] 所有数据源均失败，最终错误: {last_error}")
         return [], []
 
     @staticmethod
