@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [测试] 修复 `tests/test_fundamental_adapter_contracts.py` 中 3 个 AkShare HTTP 契约用例在 AkShare ≥ 1.20.4 下绕过 mock 直连东方财富、导致 backend-gate 失败的问题：AkShare 1.20.4 起统一经 `akshare.utils.http` 发请求，不再调用 `requests.get`；用例改为在 `requests.Session.request` 拦截传输层，新旧 AkShare 版本均离线运行，适配器代码与运行时行为不变。
 - [新功能] 个股新闻搜索支持按市场轮询搜索源：新增可选配置 `SEARCH_PROVIDER_STRATEGY`（格式 `market:strategy`，如 `us:round_robin;cn:sequential;hk:sequential;topic:sequential`），`round_robin` 每次请求轮换起点以平均消耗各家额度，失败/未配 Key/限流仍按顺序换下一个；轮询在 `SEARCH_PROVIDER_MARKETS` 过滤后进行，计数器进程内按市场保存且线程安全；默认空即全部 `sequential`，行为不变，未写到的市场与非法值按 `sequential`；日志输出每次个股新闻搜索的市场、策略、搜索源顺序与实际使用的搜索源。
 - [改进] Anspire AI Search 按官方文档对齐请求：新增 `ANSPIRE_TIER`（`standard`→`/api/ntsearch/search`，`pro`→`/api/ntsearch/prosearch`，默认 `standard`）、`ANSPIRE_REGION_MARKETS`（按市场设置 `domestic`/`overseas`/`mixed`，默认 `cn:domestic;hk:mixed;topic:domestic`，按版本换算 `region_mode`，PRO 的 `overseas` 回退 `mixed`）、`ANSPIRE_TOP_K`（仅 10/20/30/40/50，默认 10）；修复原先固定传 `region_mode=2`（港股以外也走混合、PRO 下为非法值）、`top_k` 传 3/5 等非法档位、`FromTime`/`ToTime` 使用服务器本地时区而非北京时间、超长 query 未截断的问题；`FromTime` 复用 `NEWS_MAX_AGE_DAYS` 新闻窗口，query 超 64 字符时优先保留股票名称和代码，返回结果按 `date` 过滤并由新到旧排序，PRO 不传 `search_type`；日志输出市场、版本、region_mode、top_k、FromTime 与返回条数（不含 API Key）。美股仍由 `SEARCH_PROVIDER_MARKETS` 决定是否走 Anspire。
 - [修复] Web“完整分析报告”抽屉内点击“分享”后，预览弹窗（`z-index` 70）与失败提示（80）被压在抽屉（100）及其模糊遮罩之下、点击即关闭抽屉的问题：弹窗与提示改用统一层级常量置于抽屉之上；Esc 只关闭最上层（先弹窗、后抽屉），弹窗内焦点受限并在关闭后回到“分享”按钮；报告页内分享行为与 PDF 打印输出不变。
