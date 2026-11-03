@@ -110,6 +110,9 @@ def build_market_review_runtime(
             news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
             serpapi_us_only=getattr(config, "serpapi_us_only", False),
             provider_markets=getattr(config, "search_provider_markets", ""),
+            anspire_tier=getattr(config, "anspire_tier", None),
+            anspire_region_markets=getattr(config, "anspire_region_markets", None),
+            anspire_top_k=getattr(config, "anspire_top_k", None),
         )
 
     analyzer = None

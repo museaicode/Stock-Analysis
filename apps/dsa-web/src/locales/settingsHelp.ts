@@ -391,6 +391,18 @@ const settingsHelpZhCN: SettingsHelpMap = {
     impact: ['只影响港股实时行情，不改变 A 股实时数据源优先级。'],
     notes: ['未配置 Futu OpenD 时会自动跳过 futu。'],
   },
+  'settings.data_source.anspire_search': {
+    title: 'Anspire AI Search 参数',
+    summary: '选择 Anspire 标准版或高级版 PRO，并按市场设置搜索区域与返回条数。',
+    usage: 'ANSPIRE_TIER 选择 standard（/search）或 pro（/prosearch）；ANSPIRE_REGION_MARKETS 使用 market:region 格式，多条用分号分隔；ANSPIRE_TOP_K 取 10/20/30/40/50。',
+    valueNotes: [
+      '区域 domestic=国内、overseas=海外、mixed=国内海外混合；默认 cn:domestic;hk:mixed;topic:domestic。',
+      'PRO 只有国内与混合两档，配置 overseas 时会告警并回退为 mixed。',
+      '新闻起始时间 FromTime 复用 NEWS_MAX_AGE_DAYS / NEWS_STRATEGY_PROFILE 的有效窗口，按北京时间计算。',
+    ],
+    impact: ['影响 Anspire 新闻检索的接口版本、地域覆盖与单次结果数量。'],
+    notes: ['美股是否走 Anspire 仍由 SEARCH_PROVIDER_MARKETS 决定；非法值会打印告警并回退默认值。'],
+  },
   'settings.data_source.search_api_keys': {
     title: '搜索服务 API Key',
     summary: '配置新闻与搜索增强所需的第三方搜索服务密钥。',
@@ -1623,6 +1635,18 @@ const settingsHelpEnUS: SettingsHelpMap = {
     valueNotes: ['Disabling realtime quotes falls back toward historical close prices.', 'Realtime technical indicators use intraday prices.'],
     impact: ['Affects current price, technical indicators, intraday analysis, and report fields.'],
     notes: ['A single provider failure should fall back to the next source.'],
+  },
+  'settings.data_source.anspire_search': {
+    title: 'Anspire AI Search Options',
+    summary: 'Choose the Anspire standard or PRO edition and set the search region and result count per market.',
+    usage: 'ANSPIRE_TIER selects standard (/search) or pro (/prosearch); ANSPIRE_REGION_MARKETS uses market:region entries separated by semicolons; ANSPIRE_TOP_K accepts 10/20/30/40/50.',
+    valueNotes: [
+      'Regions: domestic, overseas, mixed. Default: cn:domestic;hk:mixed;topic:domestic.',
+      'PRO only supports domestic and mixed; overseas logs a warning and falls back to mixed.',
+      'FromTime reuses the effective NEWS_MAX_AGE_DAYS / NEWS_STRATEGY_PROFILE window, in Beijing time.',
+    ],
+    impact: ['Affects the Anspire endpoint, regional coverage, and number of results per request.'],
+    notes: ['Whether US stocks use Anspire is still controlled by SEARCH_PROVIDER_MARKETS; invalid values log a warning and fall back to defaults.'],
   },
   'settings.data_source.search_api_keys': {
     title: 'Search API Keys',
