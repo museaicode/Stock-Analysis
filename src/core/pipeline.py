@@ -324,6 +324,7 @@ class StockAnalysisPipeline:
                 news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
                 serpapi_us_only=getattr(self.config, "serpapi_us_only", False),
                 provider_markets=getattr(self.config, "search_provider_markets", ""),
+                provider_strategy=getattr(self.config, "search_provider_strategy", ""),
                 anspire_tier=getattr(self.config, "anspire_tier", None),
                 anspire_region_markets=getattr(self.config, "anspire_region_markets", None),
                 anspire_top_k=getattr(self.config, "anspire_top_k", None),

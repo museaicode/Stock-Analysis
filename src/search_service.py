@@ -119,6 +119,87 @@ def parse_search_provider_markets(raw: Optional[str]) -> Dict[str, frozenset]:
         result[provider] = valid
     return result
 
+
+# SEARCH_PROVIDER_STRATEGY: 个股新闻搜索按市场选择搜索源调用策略
+SEARCH_PROVIDER_STRATEGY_SEQUENTIAL = "sequential"
+SEARCH_PROVIDER_STRATEGY_ROUND_ROBIN = "round_robin"
+SEARCH_PROVIDER_STRATEGIES = (SEARCH_PROVIDER_STRATEGY_SEQUENTIAL, SEARCH_PROVIDER_STRATEGY_ROUND_ROBIN)
+SEARCH_PROVIDER_DEFAULT_STRATEGY = SEARCH_PROVIDER_STRATEGY_SEQUENTIAL
+
+
+def parse_search_provider_strategy(raw: Optional[str]) -> Dict[str, str]:
+    """解析 SEARCH_PROVIDER_STRATEGY。
+
+    格式：``market:strategy``，多条用 ``;`` 或换行分隔，例如
+    ``us:round_robin;cn:sequential;hk:sequential;topic:sequential``。
+    market 取值同 SEARCH_PROVIDER_MARKETS（cn/hk/us/jp/kr/tw/topic），
+    strategy 取 ``sequential`` / ``round_robin``。未写到的市场按 sequential 处理；
+    策略非法时告警并回退 sequential，格式无效或市场未知的条目告警后忽略。
+    """
+    result: Dict[str, str] = {}
+    for entry in re.split(r"[;\n]", str(raw or "")):
+        entry = entry.strip()
+        if not entry:
+            continue
+        market, sep, strategy = entry.partition(":")
+        market = market.strip().lower()
+        strategy = strategy.strip().lower()
+        if not sep or not market:
+            logger.warning(
+                "SEARCH_PROVIDER_STRATEGY 条目格式无效，已忽略: %r（应为 market:strategy）",
+                entry,
+            )
+            continue
+        if market not in SEARCH_TARGET_MARKETS:
+            logger.warning(
+                "SEARCH_PROVIDER_STRATEGY 未知市场 %r，已忽略（可选: %s）",
+                market,
+                ", ".join(sorted(SEARCH_TARGET_MARKETS)),
+            )
+            continue
+        if strategy not in SEARCH_PROVIDER_STRATEGIES:
+            logger.warning(
+                "SEARCH_PROVIDER_STRATEGY 市场 %s 的策略 %r 无效（可选: %s），已回退为 %s",
+                market,
+                strategy,
+                ", ".join(SEARCH_PROVIDER_STRATEGIES),
+                SEARCH_PROVIDER_DEFAULT_STRATEGY,
+            )
+            strategy = SEARCH_PROVIDER_DEFAULT_STRATEGY
+        result[market] = strategy
+    return result
+
+
+def rotate_sequence(items: List[Any], offset: int) -> List[Any]:
+    """把列表从 ``offset``（取模）处轮转：``[a, b, c]`` + 1 -> ``[b, c, a]``。
+
+    搜索相关的轮询（综合情报换引擎、SearXNG 实例、个股新闻 round_robin）共用此逻辑。
+    """
+    if not items:
+        return []
+    start = offset % len(items)
+    return list(items[start:]) + list(items[:start])
+
+
+# 个股新闻 round_robin 计数器：进程内按市场保存，不随 SearchService 实例重建而重置
+_PROVIDER_ROUND_ROBIN_CURSORS: Dict[str, int] = {}
+_PROVIDER_ROUND_ROBIN_LOCK = threading.Lock()
+
+
+def next_provider_round_robin_offset(market: str) -> int:
+    """原子地取出某市场当前轮询起点并自增（线程安全）。"""
+    with _PROVIDER_ROUND_ROBIN_LOCK:
+        offset = _PROVIDER_ROUND_ROBIN_CURSORS.get(market, 0)
+        _PROVIDER_ROUND_ROBIN_CURSORS[market] = offset + 1
+    return offset
+
+
+def reset_provider_round_robin_cursors() -> None:
+    """重置个股新闻轮询计数器（用于测试）。"""
+    with _PROVIDER_ROUND_ROBIN_LOCK:
+        _PROVIDER_ROUND_ROBIN_CURSORS.clear()
+
+
 _SEARCH_TIMEOUT_PROCESS_START_METHOD = "spawn"
 _SEARCH_TIMEOUT_PROCESS_JOIN_GRACE_SECONDS = 1.0
 _SEARCH_TIMEOUT_WORKER_SLOTS = threading.BoundedSemaphore(4)
@@ -2377,8 +2458,7 @@ class SearXNGSearchProvider(BaseSearchProvider):
         with self._cursor_lock:
             start = self._cursor % len(pool)
             self._cursor = (self._cursor + 1) % len(pool)
-        ordered = pool[start:] + pool[:start]
-        return ordered[:max_attempts]
+        return rotate_sequence(pool, start)[:max_attempts]
 
     def _do_search(  # type: ignore[override]
         self,
@@ -2765,6 +2845,7 @@ class SearchService:
         news_strategy_profile: str = "short",
         serpapi_us_only: bool = False,
         provider_markets: Optional[str] = None,
+        provider_strategy: Optional[str] = None,
         anspire_tier: Optional[str] = None,
         anspire_region_markets: Optional[str] = None,
         anspire_top_k: Any = None,
@@ -2786,6 +2867,8 @@ class SearchService:
             serpapi_us_only: 开启后 SerpAPI 仅参与美股搜索（A 股/港股/题材等非美股目标跳过 SerpAPI）；
                 等价于 provider_markets 中的 ``serpapi:us``，表中显式写了 serpapi 时以表为准
             provider_markets: SEARCH_PROVIDER_MARKETS 原始字符串，按市场分配搜索服务
+            provider_strategy: SEARCH_PROVIDER_STRATEGY 原始字符串，按市场设置个股新闻搜索源调用策略
+                （sequential / round_robin），未写到的市场按 sequential
             anspire_tier: ANSPIRE_TIER（standard -> /search，pro -> /prosearch）
             anspire_region_markets: ANSPIRE_REGION_MARKETS 原始字符串（market:domestic|overseas|mixed）
             anspire_top_k: ANSPIRE_TOP_K（10/20/30/40/50）
@@ -2804,6 +2887,7 @@ class SearchService:
             "news_strategy_profile": news_strategy_profile,
             "serpapi_us_only": bool(serpapi_us_only),
             "provider_markets": provider_markets,
+            "provider_strategy": provider_strategy,
             "anspire_tier": anspire_tier,
             "anspire_region_markets": anspire_region_markets,
             "anspire_top_k": anspire_top_k,
@@ -2813,6 +2897,7 @@ class SearchService:
         if self._serpapi_us_only and "serpapi" not in self._provider_markets:
             # SERPAPI_US_ONLY 是 serpapi:us 的简写
             self._provider_markets["serpapi"] = frozenset({"us"})
+        self._provider_strategy: Dict[str, str] = parse_search_provider_strategy(provider_strategy)
         self._providers: List[BaseSearchProvider] = []
         self.news_max_age_days = max(1, news_max_age_days)
         raw_profile = (news_strategy_profile or "short").strip().lower()
@@ -2900,6 +2985,15 @@ class SearchService:
                 )
         if self._provider_markets:
             self._log_provider_markets()
+        round_robin_markets = sorted(
+            market for market, strategy in self._provider_strategy.items()
+            if strategy == SEARCH_PROVIDER_STRATEGY_ROUND_ROBIN
+        )
+        if round_robin_markets:
+            logger.info(
+                "SEARCH_PROVIDER_STRATEGY 已生效，个股新闻按轮询使用搜索源的市场: %s（其余市场 sequential）",
+                ", ".join(round_robin_markets),
+            )
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
         self._cache: Dict[str, Tuple[float, 'SearchResponse']] = {}
@@ -3041,6 +3135,29 @@ class SearchService:
             p for p in providers
             if p.name.lower() not in table or market in table[p.name.lower()]
         ]
+
+    def _provider_strategy_for_market(self, market: str) -> str:
+        """SEARCH_PROVIDER_STRATEGY 中该市场的策略，未配置时为 sequential。"""
+        table = getattr(self, "_provider_strategy", None) or {}
+        return table.get(market, SEARCH_PROVIDER_DEFAULT_STRATEGY)
+
+    def _ordered_providers_for_stock_news(
+        self,
+        stock_code: Optional[str] = None,
+        stock_name: Optional[str] = None,
+    ) -> Tuple[str, str, List[BaseSearchProvider]]:
+        """个股新闻搜索的 provider 尝试顺序：返回 (market, strategy, providers)。
+
+        先按 SEARCH_PROVIDER_MARKETS 过滤，再只保留当前可用（有 Key/实例）的 provider；
+        round_robin 时按市场计数器轮转起点，后续 provider 仍按原有优先级依次兜底，
+        因此某个搜索源失败/限流时依旧会继续尝试其余搜索源。
+        """
+        market = self._search_target_market(stock_code, stock_name)
+        strategy = self._provider_strategy_for_market(market)
+        providers = [p for p in self._providers_for_target(stock_code, stock_name) if p.is_available]
+        if strategy == SEARCH_PROVIDER_STRATEGY_ROUND_ROBIN and len(providers) > 1:
+            providers = rotate_sequence(providers, next_provider_round_robin_offset(market))
+        return market, strategy, providers
 
     def _log_provider_markets(self) -> None:
         """启动时输出搜索服务的市场分配情况。"""
@@ -4632,7 +4749,30 @@ class SearchService:
             had_provider_success = False
             best_ranked_response: Optional[SearchResponse] = None
             best_ranked_stats: Optional[Dict[str, int]] = None
-            for provider in self._providers_for_target(stock_code, stock_name):
+            market, strategy, ordered_providers = self._ordered_providers_for_stock_news(
+                stock_code,
+                stock_name,
+            )
+            logger.info(
+                "[个股新闻] %s 市场=%s, 策略=%s, 搜索源顺序=%s",
+                subject_label,
+                market,
+                strategy,
+                " -> ".join(p.name for p in ordered_providers) or "无",
+            )
+
+            def _log_used_provider(final_response: SearchResponse) -> SearchResponse:
+                logger.info(
+                    "[个股新闻] %s 市场=%s, 策略=%s, 实际使用搜索源=%s, 结果数=%s",
+                    subject_label,
+                    market,
+                    strategy,
+                    final_response.provider,
+                    len(final_response.results or []),
+                )
+                return final_response
+
+            for provider in ordered_providers:
                 if not provider.is_available:
                     continue
 
@@ -4738,7 +4878,7 @@ class SearchService:
                             stats["direct_count"],
                         )
                         self._put_cache(cache_key, limited_response)
-                        return limited_response
+                        return _log_used_provider(limited_response)
 
                     if prefer_chinese and stats["direct_count"] > 0:
                         logger.info(
@@ -4794,25 +4934,25 @@ class SearchService:
 
             if best_ranked_response is not None:
                 self._put_cache(cache_key, best_ranked_response)
-                return best_ranked_response
+                return _log_used_provider(best_ranked_response)
 
             if had_provider_success:
-                return SearchResponse(
+                return _log_used_provider(SearchResponse(
                     query=query,
                     results=[],
                     provider="Filtered",
                     success=True,
                     error_message=None,
-                )
-            
+                ))
+
             # 所有引擎都失败
-            return SearchResponse(
+            return _log_used_provider(SearchResponse(
                 query=query,
                 results=[],
                 provider="None",
                 success=False,
                 error_message="所有搜索引擎都不可用或搜索失败"
-            )
+            ))
         finally:
             if cache_owner and cache_event is not None:
                 self._release_cache_fill(cache_key, cache_event)
@@ -5059,7 +5199,7 @@ class SearchService:
             if not available_providers:
                 break
             
-            provider = available_providers[provider_index % len(available_providers)]
+            provider = rotate_sequence(available_providers, provider_index)[0]
             provider_index += 1
             
             request_days = (
@@ -5441,6 +5581,7 @@ def get_search_service() -> SearchService:
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
                     serpapi_us_only=getattr(config, "serpapi_us_only", False),
                     provider_markets=getattr(config, "search_provider_markets", ""),
+                    provider_strategy=getattr(config, "search_provider_strategy", ""),
                     anspire_tier=getattr(config, "anspire_tier", None),
                     anspire_region_markets=getattr(config, "anspire_region_markets", None),
                     anspire_top_k=getattr(config, "anspire_top_k", None),

@@ -403,6 +403,18 @@ const settingsHelpZhCN: SettingsHelpMap = {
     impact: ['影响 Anspire 新闻检索的接口版本、地域覆盖与单次结果数量。'],
     notes: ['美股是否走 Anspire 仍由 SEARCH_PROVIDER_MARKETS 决定；非法值会打印告警并回退默认值。'],
   },
+  'settings.data_source.search_provider_strategy': {
+    title: '个股新闻搜索源策略',
+    summary: '按市场选择个股新闻搜索是按固定顺序调用搜索源，还是轮流使用以平均消耗各家额度。',
+    usage: 'SEARCH_PROVIDER_STRATEGY 使用 market:strategy 格式，多条用分号分隔，例如 us:round_robin;cn:sequential;hk:sequential;topic:sequential。',
+    valueNotes: [
+      'sequential：按固定优先级调用，失败才换下一个（默认）。',
+      'round_robin：每次请求轮换起点；起点搜索源失败、未配置 Key 或被限流时，仍按顺序继续尝试其余搜索源。',
+      '市场取 cn / hk / us / jp / kr / tw / topic；未写到的市场按 sequential，非法策略告警并回退 sequential。',
+    ],
+    impact: ['只影响个股新闻搜索的搜索源调用顺序；综合情报搜索已按维度轮换，不受此项影响。'],
+    notes: ['轮询在 SEARCH_PROVIDER_MARKETS 过滤后的搜索源上进行，不会让美股走 Anspire 或让 A 股/港股走美股专用搜索源；计数器在进程内按市场保存，重启后从头开始。'],
+  },
   'settings.data_source.search_api_keys': {
     title: '搜索服务 API Key',
     summary: '配置新闻与搜索增强所需的第三方搜索服务密钥。',
@@ -1647,6 +1659,18 @@ const settingsHelpEnUS: SettingsHelpMap = {
     ],
     impact: ['Affects the Anspire endpoint, regional coverage, and number of results per request.'],
     notes: ['Whether US stocks use Anspire is still controlled by SEARCH_PROVIDER_MARKETS; invalid values log a warning and fall back to defaults.'],
+  },
+  'settings.data_source.search_provider_strategy': {
+    title: 'Stock News Provider Strategy',
+    summary: 'Choose per market whether stock news search calls providers in fixed order or rotates them to spread quota evenly.',
+    usage: 'SEARCH_PROVIDER_STRATEGY uses market:strategy entries separated by semicolons, e.g. us:round_robin;cn:sequential;hk:sequential;topic:sequential.',
+    valueNotes: [
+      'sequential: fixed priority order, move to the next provider only after a failure (default).',
+      'round_robin: rotate the starting provider on every request; if it fails, has no key, or is rate limited, the remaining providers are still tried in order.',
+      'Markets: cn / hk / us / jp / kr / tw / topic. Unlisted markets use sequential; invalid strategies log a warning and fall back to sequential.',
+    ],
+    impact: ['Only affects the provider order for stock news search; comprehensive intel search already rotates per dimension.'],
+    notes: ['Rotation runs on the providers left after SEARCH_PROVIDER_MARKETS filtering, so market routing is preserved; counters are kept in-process per market and restart from zero after a restart.'],
   },
   'settings.data_source.search_api_keys': {
     title: 'Search API Keys',
